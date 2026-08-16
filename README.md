@@ -9,6 +9,12 @@ commit, a model context, or a log**.
 That is the whole product in one sentence. Everything below exists to make that
 sentence true rather than aspirational.
 
+> **Setting this up with an AI agent?** Point it at
+> [`AGENTS.md`](AGENTS.md) — or just give it this repository's URL. It routes to
+> [`docs/agent-setup.md`](docs/agent-setup.md), which walks any shell-capable
+> agent through installation, enrolment and MCP wiring, and is explicit about the
+> one step an agent must **not** do for you.
+
 ---
 
 ## The problem
@@ -53,23 +59,47 @@ Agent Secrets adds the interaction layer that is missing around it:
 
 ## Current status
 
-> **Pre-release. V1 in development. Nothing is published to npm yet.**
+> **Pre-release. Not published to npm yet, and not externally reviewed.**
 >
-> What exists today is the monorepo skeleton and the domain core
-> (`@bx-labs/agent-secrets-core`): canonical references, sanitized errors, metadata
-> and audit schemas, the policy engine, value rules, and the `SecretValue` wrapper.
-> The CLI, the Bitwarden adapter, the Telegram bot, the API and the MCP server are
-> **designed and specified but not implemented**.
+> V1 is implemented end to end: the domain core, the redaction package, the
+> Bitwarden adapter, the CLI, the single-tenant API with its one-time secure form,
+> the Telegram adapter, and the MCP server. 503 tests; lint, typecheck, secret
+> scanning and a structural no-raw-getter guard run in CI on macOS and Linux.
 >
-> [`ROADMAP.md`](ROADMAP.md) tracks it item by item and
-> [`CONTEXT.md`](CONTEXT.md) records what is deliberately unfinished. Do not deploy
-> this yet.
+> Two caveats worth reading before you trust it with anything:
+>
+> - **It has never run against a real `bws`.** Every test and the demo drive a
+>   fake Bitwarden CLI, so the adapter is proven against a model of the real thing.
+> - **Bitwarden grants permissions per project**, and all environments live under
+>   one Bitwarden project so two machines can share a credential. Environment
+>   isolation is therefore enforced by our policy engine, not by the vault — see
+>   [§5.12 of the threat model](docs/threat-model.md).
+>
+> [`ROADMAP.md`](ROADMAP.md) tracks what is left and [`CONTEXT.md`](CONTEXT.md)
+> records the decisions behind it.
 
 ---
 
-## 60 seconds, once V1 ships
+## Try it without a Bitwarden account
 
-Everything in this section is the **planned** V1 path. It does not work yet.
+The demo runs the real CLI against a fake vault in a throwaway directory. It
+touches no Keychain, no vault, and no real credential.
+
+```bash
+git clone https://github.com/Brissux-Labs/agent-secrets.git
+cd agent-secrets
+pnpm install && pnpm build
+pnpm demo
+```
+
+It walks through enrolment, adding a secret, listing it, injecting it into a
+child process — including what happens when that child prints the value back —
+and a production write being refused. It ends by showing which files hold the
+value: the vault, and nothing else.
+
+---
+
+## 60 seconds with a real vault
 
 ```bash
 # 1. Install the CLI. The unscoped name was taken on npm, so the package is scoped;
@@ -192,6 +222,8 @@ in that diagram carries metadata only.
 
 | Document                                            | What you will find                                            |
 | --------------------------------------------------- | ------------------------------------------------------------- |
+| [`AGENTS.md`](AGENTS.md)                             | Entry point for AI agents: install it, or change it             |
+| [`docs/agent-setup.md`](docs/agent-setup.md)         | Agent-driven setup, step by step, with the human handoff marked |
 | [`DOC.md`](DOC.md)                                   | Command surface, JSON envelope, config paths, environment vars |
 | [`docs/architecture.md`](docs/architecture.md)       | Components, data flows, backend contract, data model           |
 | [`docs/threat-model.md`](docs/threat-model.md)       | Assets, adversaries, mitigations, and what we do **not** stop  |

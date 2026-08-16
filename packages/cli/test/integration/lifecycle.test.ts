@@ -232,6 +232,43 @@ describe('CLI lifecycle', () => {
     expect(listed.stdout).not.toContain(canary);
   });
 
+  it('accepts --json before or after the subcommand', async () => {
+    // commander gives the parent precedence in optsWithGlobals(), so the
+    // program-level default silently overwrote a --json typed after the
+    // subcommand — which is where everyone types it.
+    await enrol();
+
+    const trailing = await cli(['list', '--project', 'ezjob', '--env', 'development', '--json']);
+    const leading = await cli(['--json', 'list', '--project', 'ezjob', '--env', 'development']);
+
+    for (const result of [trailing, leading]) {
+      expect(result.code).toBe(0);
+      const payload = JSON.parse(result.stdout) as { schemaVersion: number; status: string };
+      expect(payload.schemaVersion).toBe(1);
+      expect(payload.status).toBe('ok');
+    }
+  });
+
+  it('exposes doctor as JSON with a stable envelope', async () => {
+    // The command an agent runs to decide whether setup finished.
+    const notEnrolled = await cli(['doctor', '--json']);
+    expect(notEnrolled.code).toBe(3);
+    expect((JSON.parse(notEnrolled.stdout) as { data: { enrolled: boolean } }).data.enrolled).toBe(
+      false,
+    );
+
+    await enrol();
+    const enrolled = await cli(['doctor', '--json']);
+    expect(enrolled.code).toBe(0);
+    const payload = JSON.parse(enrolled.stdout) as {
+      data: { enrolled: boolean; backend: { reachable: boolean } };
+    };
+    expect(payload.data.enrolled).toBe(true);
+    expect(payload.data.backend.reachable).toBe(true);
+    // Nothing about the token, in any field.
+    expect(enrolled.stdout).not.toContain(bws.token);
+  });
+
   it('reports errors as JSON on stderr in JSON mode', async () => {
     await enrol();
     const result = await cli([

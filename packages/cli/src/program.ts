@@ -46,11 +46,19 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .showHelpAfterError();
 
   const contextFor = async (command: Command): Promise<Context> => {
-    const globals = command.optsWithGlobals() as { json?: boolean; color?: boolean };
+    // Merged by hand rather than with `optsWithGlobals()` alone: commander gives
+    // the *parent* precedence, so the program-level `--json` default of `false`
+    // silently overwrote a `--json` typed after the subcommand. Both positions
+    // mean the same thing to a user, so both have to work.
+    const local = command.opts() as { json?: boolean; color?: boolean };
+    const inherited = command.optsWithGlobals() as { json?: boolean; color?: boolean };
+    const wantsJson = local.json === true || inherited.json === true;
+    const wantsColor = local.color !== false && inherited.color !== false;
+
     const env = options.env ?? process.env;
     const writer = new Writer({
-      mode: globals.json ? 'json' : 'human',
-      color: globals.color !== false && shouldUseColor(process.argv, env),
+      mode: wantsJson ? 'json' : 'human',
+      color: wantsColor && shouldUseColor(process.argv, env),
       ...(options.stdout === undefined ? {} : { stdout: options.stdout }),
       ...(options.stderr === undefined ? {} : { stderr: options.stderr }),
     });
@@ -76,8 +84,22 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
       }
     };
 
-  const scopeOptions = (command: Command): Command =>
+  /**
+   * Options every subcommand accepts.
+   *
+   * Declared per subcommand rather than only on the program, because
+   * `enablePositionalOptions()` — which `run` needs so that
+   * `run … -- npm test --watch` hands `--watch` to npm — otherwise makes
+   * `agent-secrets doctor --json` an error. Trailing flags are how everyone
+   * actually types a CLI, so both forms work.
+   */
+  const commonOptions = (command: Command): Command =>
     command
+      .option('--json', 'machine-readable output with a stable schema')
+      .option('--no-color', 'disable ANSI colour');
+
+  const scopeOptions = (command: Command): Command =>
+    commonOptions(command)
       .requiredOption('-p, --project <slug>', 'project slug, e.g. ezjob')
       .addOption(
         new Option('-e, --env <environment>', 'development | preview | production')
@@ -87,9 +109,11 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
 
   // ── device lifecycle ──────────────────────────────────────────────────────
 
-  program
-    .command('init')
-    .description('enrol this device: store its backend access token in the OS credential store')
+  commonOptions(
+    program
+      .command('init')
+      .description('enrol this device: store its backend access token in the OS credential store'),
+  )
     .option('--device-name <name>', 'how this machine appears in audit records')
     .option('--project-id <uuid>', 'Bitwarden project ID')
     .option('--server-url <url>', 'self-hosted Bitwarden API base URL')
@@ -97,14 +121,17 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .option('--force', 're-enrol a device that is already enrolled', false)
     .action(handle((context, opts) => runInit(context, opts)));
 
-  program
-    .command('doctor')
-    .description('check enrolment, backend reachability, and file permissions')
-    .action(handle((context) => runDoctor(context)));
+  commonOptions(
+    program
+      .command('doctor')
+      .description('check enrolment, backend reachability, and file permissions'),
+  ).action(handle((context) => runDoctor(context)));
 
-  program
-    .command('logout')
-    .description("remove this device's local token — vault secrets are untouched")
+  commonOptions(
+    program
+      .command('logout')
+      .description("remove this device's local token — vault secrets are untouched"),
+  )
     .option('-y, --yes', 'skip the confirmation prompt', false)
     .action(handle((context, opts) => runLogout(context, opts)));
 
@@ -159,9 +186,11 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
 
   // ── controlled execution ──────────────────────────────────────────────────
 
-  program
-    .command('run')
-    .description('run a command with named secrets injected into its environment')
+  commonOptions(
+    program
+      .command('run')
+      .description('run a command with named secrets injected into its environment'),
+  )
     .option('-p, --project <slug>', 'project slug')
     .addOption(
       new Option('-e, --env <environment>', 'development | preview | production').choices([

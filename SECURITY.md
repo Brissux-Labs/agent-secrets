@@ -11,12 +11,6 @@ than not hear about a real one.
 
 **Email `security@bxlabs.ai`.**
 
-> **Maintainer note — action required before this repository goes public.**
-> Confirm that `security@bxlabs.ai` is a real, monitored mailbox and that someone
-> reads it. A published disclosure address that bounces is worse than publishing no
-> address at all, because a reporter who bounces usually goes public instead. This
-> note stays in the file until the mailbox is verified.
-
 **Do not open a public GitHub issue, discussion, or pull request for a security
 issue.** Do not post it in a public chat. If a fix is obvious to you, it is obvious to
 whoever reads the issue before we do.
