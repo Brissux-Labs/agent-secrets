@@ -112,6 +112,31 @@ record(
     : 'Optional while testing from a clone; the built entry point works directly.',
 );
 
+// ── enrolment state, read early ────────────────────────────────────
+const configHome =
+  process.env.AGENT_SECRETS_HOME ??
+  join(
+    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? homedir(), '.config'),
+    'agent-secrets',
+  );
+const configPath = join(configHome, 'config.json');
+
+let enrolled = false;
+let deviceName = null;
+// The path `init` pinned, if any. Read here because the bws check below needs it:
+// an enrolment that recorded an absolute path does not care where bws sits.
+let enrolledBwsPath = null;
+if (await exists(configPath)) {
+  try {
+    const parsed = JSON.parse(await readFile(configPath, 'utf8'));
+    enrolled = typeof parsed.deviceId === 'string';
+    deviceName = parsed.deviceName ?? null;
+    enrolledBwsPath = parsed.bitwarden?.executablePath ?? null;
+  } catch {
+    // A config we cannot parse is not an enrolment.
+  }
+}
+
 // ── the backend ────────────────────────────────────────────────────────────
 const bwsPath = await which('bws');
 const bwsVersion = bwsPath ? await versionOf(bwsPath) : null;
@@ -142,7 +167,8 @@ const SAFE_PATH_DIRS = [
   '/usr/sbin',
   '/sbin',
 ];
-const bwsPinned = (process.env.AGENT_SECRETS_BWS_PATH ?? '').trim().length > 0;
+const bwsPinned =
+  (process.env.AGENT_SECRETS_BWS_PATH ?? '').trim().length > 0 || enrolledBwsPath !== null;
 const bwsReachable =
   bwsPath === null ||
   bwsPinned ||
@@ -150,32 +176,15 @@ const bwsReachable =
 record(
   'bws-reachable',
   bwsReachable,
-  bwsPinned ? 'AGENT_SECRETS_BWS_PATH is set' : (bwsPath ?? null),
+  bwsPinned
+    ? `pinned: ${enrolledBwsPath ?? process.env.AGENT_SECRETS_BWS_PATH}`
+    : (bwsPath ?? null),
   bwsReachable
     ? null
     : `bws is on your PATH but outside the directories Agent Secrets searches (${SAFE_PATH_DIRS.join(', ')}). Set AGENT_SECRETS_BWS_PATH=${bwsPath} or pass --executable-path to init.`,
 );
 
 // ── enrolment ──────────────────────────────────────────────────────────────
-const configHome =
-  process.env.AGENT_SECRETS_HOME ??
-  join(
-    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? homedir(), '.config'),
-    'agent-secrets',
-  );
-const configPath = join(configHome, 'config.json');
-
-let enrolled = false;
-let deviceName = null;
-if (await exists(configPath)) {
-  try {
-    const parsed = JSON.parse(await readFile(configPath, 'utf8'));
-    enrolled = typeof parsed.deviceId === 'string';
-    deviceName = parsed.deviceName ?? null;
-  } catch {
-    // A config we cannot parse is not an enrolment.
-  }
-}
 record(
   'enrolled',
   enrolled,
