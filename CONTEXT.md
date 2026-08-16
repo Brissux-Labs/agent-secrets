@@ -118,6 +118,51 @@ down here or in `DOC.md` before you finish.
 
 ## Intervention timeline
 
+### 2026-08-16 — The portable process: what every MCP client is told
+
+Wiring the server into a client makes the tools reachable. It does not make an agent
+*use* them, and an agent that never thinks to involve Agent Secrets solves a
+credential problem the way credential problems have always been solved — a `.env`, a
+shell variable, a value pasted into a chat — without breaking a single rule this
+package enforces.
+
+The server's `instructions`, sent once at initialize, are the only guidance that
+reaches every client before the model has decided anything. They were nine lines. They
+are now a card: what counts as a secret, that no tool returns a value, which action
+answers which need, the four things never to do with a value (including *taking* one
+from a `.env` as a fallback), what to say when a value lands in context anyway, and
+that names reach the application unchanged. `SERVER_INSTRUCTIONS` is exported and
+unit-tested rule by rule, with a length cap — a rule nobody reads is a rule that does
+not exist.
+
+Nothing was special-cased per client, and no tool was added: still exactly seven,
+still no raw getter.
+
+**Two documentation defects found while doing it.** `docs/mcp.md` §3 documented
+`args: ["--project", "ezjob"]` and a `--policy` flag for `agent-secrets-mcp`. Neither
+has ever existed — `bin.ts` reads no command-line arguments at all, taking the project
+from the enrolment and the policy from `<config-dir>/policy.yaml`. Anyone following
+that page built a mental model of a scope a client could choose, which is the opposite
+of the design. The same file still carried the "planned, `src/` is empty" banner.
+
+**And one defect of our own, caught by actually running the checks.** The
+`bws-reachable` check added this morning ignored the path `init` pins in
+`config.json`, so this very machine — enrolled, working, `doctor` green — was reported
+`ready: false` with an instruction to export a variable it does not need. Fixed:
+a pinned path satisfies the check. Both branches were re-run, enrolled and not.
+
+**Limits, stated where they belong rather than implied.** `docs/mcp.md` §3 now has an
+"Available is not the same as applied" section: a client may never surface
+`instructions`; MCP cannot see what an agent does outside it, so a shell can write or
+read a `.env` with no server involved; what is enforced in code is narrower and
+absolute. The lever for turning the second half into a guarantee is the environment
+the agent runs in — a sandbox, a separate OS user, an executable allow-list — not a
+longer prompt.
+
+Per-client configuration is now labelled by what we have actually run: Claude Code
+(run here), Codex, OpenClaw and Hermes (documented shape, not executed). A snippet
+nobody has run is a bug report waiting to happen.
+
 ### 2026-08-16 — The disclosure address exists, and the state sections were a year behind
 
 `security@bxlabs.ai` was created. `bxlabs.ai` carries a Google Workspace MX record, so

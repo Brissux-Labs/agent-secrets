@@ -372,6 +372,52 @@ describe('MCP server', () => {
     expect(text).toContain('[REDACTED]');
   });
 
+  /**
+   * The naming contract, asserted rather than assumed.
+   *
+   * An application receives the variable name it expects. Scope lives in the
+   * reference — project/environment/name — and never in the variable name, so
+   * two projects can both hold an `OPENAI_API_KEY` without either child process
+   * learning that the other exists. Any future "helpful" prefixing or aliasing
+   * breaks every consumer silently; this test is the thing that would fail.
+   */
+  it('injects each secret under its own name, unprefixed and unaliased', async () => {
+    await connect();
+    const probe = [
+      'const seen = Object.keys(process.env).filter((k) => k.includes("OPENAI"));',
+      'console.log(JSON.stringify(seen));',
+    ].join('');
+
+    const text = textOf(
+      await client.callTool({
+        name: 'run_with_secrets',
+        arguments: {
+          ...DEV,
+          secrets: ['OPENAI_API_KEY'],
+          command: [process.execPath, '-e', probe],
+        },
+      }),
+    );
+
+    expect(text).toContain('OPENAI_API_KEY');
+    expect(text).not.toMatch(
+      /EZJOB_OPENAI_API_KEY|OPENAI_API_KEY_DEVELOPMENT|AGENT_SECRETS_OPENAI/,
+    );
+    expect(text).not.toContain(canary);
+  });
+
+  it('sends its instructions to whatever client connects', async () => {
+    await connect();
+    const instructions = client.getInstructions() ?? '';
+
+    // The process, not just the inventory: a client that only ever reads tool
+    // descriptions never learns when to involve this server in the first place.
+    expect(instructions).toContain('run_with_secrets');
+    expect(instructions).toMatch(/never[\s\S]{0,80}paste/i);
+    expect(instructions).toMatch(/compromised/i);
+    expect(instructions).not.toContain(canary);
+  });
+
   it('reports a dry run without touching the vault', async () => {
     await connect();
     const before = (await bws.calls()).length;

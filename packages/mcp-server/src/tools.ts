@@ -16,6 +16,73 @@ import { z } from 'zod';
  * hands what it resolves to a child process, never to a result.
  */
 
+/**
+ * What every MCP client receives at initialize, before the model has decided
+ * anything.
+ *
+ * Tool descriptions are read once a model is already looking at a tool. This is
+ * read earlier, and it answers the question the descriptions cannot: *when does
+ * this server become relevant at all?* A model that never thinks to involve
+ * Agent Secrets will solve a credential problem the way credential problems
+ * have always been solved — a `.env`, a shell variable, a value pasted into a
+ * chat — and every guarantee in this package is bypassed without a single rule
+ * being broken.
+ *
+ * Three things this text is not:
+ *
+ *  - **Enforcement.** It is guidance. What the code guarantees is that no tool
+ *    can return a value; a client is free to ignore this string, and some will.
+ *    `docs/mcp.md` §3 states that limit rather than leaving it implied.
+ *  - **Client-specific.** Claude Code, Codex, Hermes and OpenClaw receive the
+ *    same words. Nothing here may special-case a client.
+ *  - **Long.** A rule nobody reads is a rule that does not exist. Every line
+ *    earns its place, and a test caps the total length.
+ */
+export const SERVER_INSTRUCTIONS = [
+  'Agent Secrets is a secret broker. Its purpose is to keep credential values out of',
+  'model context — including yours.',
+  '',
+  'WHAT COUNTS',
+  'Any API key, access token, password, private key, certificate, database or service',
+  'connection string, webhook signing secret, or environment variable holding one. If',
+  'you are unsure whether something qualifies, treat it as though it does.',
+  '',
+  'NO TOOL HERE RETURNS A VALUE',
+  'This is enforced in code, not by convention: no path leads from a stored value to a',
+  'tool result. If a task appears to require a value, it does not.',
+  '',
+  'WHICH ACTION',
+  '  Does it exist? What is it called?  -> secret_describe, secret_list (metadata only)',
+  '  A command or app needs it          -> run_with_secrets',
+  '  Create one                         -> secret_add_request',
+  '  Replace one                        -> secret_rotate_request',
+  '  Delete one                         -> secret_delete_request, confirmation from the human',
+  '  Backend or server down             -> report the blockage and stop',
+  '',
+  'When secure links are not configured, the request tools hand you the exact',
+  '`agent-secrets add` or `agent-secrets rotate` command instead. Give it to the human',
+  'verbatim; they type the value at a hidden prompt. You never see it, and never need to.',
+  '',
+  'NEVER',
+  '- Ask a human to paste a value into this conversation, a chat, an issue or a ticket.',
+  '- Write a value into a source file, a .env, a config file, a note, an agent memory, a',
+  '  prompt, a command argument, a shell history, or a log.',
+  '- Take a value from a .env, a credentials file, or your own memory as a fallback.',
+  '- Route around a failure. If Agent Secrets is unavailable, say so and stop. Falling',
+  '  back to a plaintext store is the outcome this product exists to prevent; it is',
+  '  worse than the outage.',
+  "- Report a value's length, hash, prefix, suffix or fingerprint. Each one is disclosure.",
+  '',
+  'IF A VALUE REACHES YOUR CONTEXT ANYWAY',
+  'Say plainly that it is now compromised and must be revoked and replaced at the',
+  'provider. Deleting the message, the file or the transcript does not undo it.',
+  '',
+  'NAMES DO NOT CHANGE',
+  'An application receives the variable name it expects: OPENAI_API_KEY stays',
+  'OPENAI_API_KEY. Scope lives in the reference — project/environment/name — never in',
+  'the variable name. run_with_secrets injects each secret under its own name.',
+].join('\n');
+
 const projectArg = z
   .string()
   .regex(SLUG_PATTERN, 'lowercase letters, digits and hyphens')

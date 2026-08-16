@@ -47,6 +47,17 @@ to convention. If a task appears to require reading a value:
 - to *set* one → ask the human; they enter it at a hidden prompt or through a
   one-time link.
 
+This applies to anything credential-shaped: API keys, access tokens, passwords,
+private keys and certificates, database and service connection strings, webhook
+signing secrets. If you are unsure whether something qualifies, treat it as
+though it does.
+
+**Two things that are not the same as a leak, and are still forbidden.** Do not
+write a value into a `.env`, a source file, a note, a memory, a command argument
+or a log — and do not *take* one from any of those as a fallback. If Agent
+Secrets is unavailable, say so and stop: falling back to a plaintext store is
+the outcome this product exists to prevent, and it is worse than the outage.
+
 Do not ask a human to paste a credential into a conversation with you. If one
 appears anyway, tell them plainly that it is now exposed and should be rotated at
 the provider — deleting the message does not undo it.

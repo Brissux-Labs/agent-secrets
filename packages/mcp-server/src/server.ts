@@ -19,6 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { LinkIssuer } from './link-issuer.js';
 import {
   runWithSecretsArgs,
+  SERVER_INSTRUCTIONS,
   secretAddRequestArgs,
   secretDeleteRequestArgs,
   secretDescribeArgs,
@@ -101,17 +102,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   const server = new McpServer(
     { name: 'agent-secrets', version: '0.1.0' },
     {
-      instructions: [
-        'Agent Secrets exposes secret metadata and controlled execution.',
-        '',
-        'No tool on this server returns a secret value. This is enforced in code,',
-        'not by convention: there is no code path from a stored value to a tool',
-        'result. If a task seems to require reading a value, it does not — use',
-        'run_with_secrets to execute the command that needs it, or ask the human',
-        'to enter a new value through a secure link.',
-        '',
-        'Never ask a human to paste a credential into this conversation.',
-      ].join('\n'),
+      instructions: SERVER_INSTRUCTIONS,
     },
   );
 

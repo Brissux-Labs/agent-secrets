@@ -250,11 +250,25 @@ same policy file. There is no second credential to hand it.
 }
 ```
 
-**Codex and other clients using the same shape** — usually `~/.codex/config.toml`
-or a `mcpServers` block; the command and args are identical.
+**Codex** — `~/.codex/config.toml`, `[mcp_servers.agent-secrets]` with
+`command = "agent-secrets-mcp"` and `args = []`.
+
+**OpenClaw** — `openclaw.json` under `mcp.servers`, or
+`openclaw mcp add agent-secrets --command agent-secrets-mcp`.
 
 **Any MCP client**: the server speaks stdio. Launch `agent-secrets-mcp` with no
-arguments. Remote HTTP transport is deliberately not implemented yet.
+arguments — it reads none, and takes everything else from this machine's
+enrolment. Remote HTTP transport is deliberately not implemented yet. Per-client
+snippets and which of them we have actually run: [`mcp.md`](mcp.md) §3.
+
+**Wiring it in does not make an agent use it.** The server sends instructions at
+initialize telling any client's model when a credential is involved and what to
+never do with it, and that is what makes an agent reach for these tools instead
+of a `.env`. But a client may not surface those instructions, and MCP cannot see
+what an agent does outside it — a shell can write a `.env` without any server
+noticing. What is enforced in code is narrower and absolute: no tool returns a
+value. Read [`mcp.md`](mcp.md) §3, "Available is not the same as applied", before
+you tell the human they are covered.
 
 **Hermes** already loads Bitwarden Secrets Manager at startup through
 `hermes secrets bitwarden setup`. Agent Secrets complements that rather than

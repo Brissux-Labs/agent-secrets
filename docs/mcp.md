@@ -12,8 +12,8 @@ a human to supply or rotate one, run a command that consumes them, and check bac
 health. It cannot read a value. There is no argument, no phrasing, and no sequence of
 calls that produces one, because no code path exists to produce one.
 
-> **Status.** The MCP server is **planned**. `packages/mcp-server/src/` is empty. The
-> tool shapes below are the specification.
+> **Status.** Implemented and covered by tests. The tool inventory below is enumerated
+> by a test that fails if it changes.
 
 ---
 
@@ -31,6 +31,28 @@ registered tools and fails if the inventory differs.
 | `secret_rotate_request` | no | no — creates a request for a human |
 | `secret_delete_request` | no | no — creates a request for a human |
 | `run_with_secrets` | no | runs a command |
+
+### Which action to use
+
+The table an agent needs before it needs any of the detail below. The same guidance is
+sent to every client as the server's `instructions` at initialize, so a model normally
+has it without reading this page.
+
+| You need to… | Use |
+| ------------ | --- |
+| Check a secret exists, or find its exact name | `secret_describe`, `secret_list` — metadata only |
+| Give a command or an application its value | `run_with_secrets` |
+| Create a secret | `secret_add_request` — or the human runs `agent-secrets add NAME --project P --env E` |
+| Replace a secret | `secret_rotate_request` — or `agent-secrets rotate NAME --project P --env E` |
+| Delete a secret | `secret_delete_request`, with the canonical reference as confirmation, supplied by the human |
+| Know whether the backend is healthy | `secret_health` |
+| **Handle a backend that is down** | Report the blockage and stop. Never fall back to a `.env`, a shell variable, or any other plaintext store |
+| **Handle a value that leaked into the conversation** | Say it is compromised; it must be revoked and replaced at the provider. Deleting the message does not undo it |
+| **Read a value** | Nothing. There is no such action, and no sequence of the above produces one |
+
+When no secure-link service is configured, `secret_add_request` and
+`secret_rotate_request` return the exact CLI command for the human to run instead — see
+[`secret_add_request`](#secret_add_request) below.
 
 Every result is wrapped in the standard envelope and passed through
 `assertNoValueFields` before it is returned:
@@ -289,64 +311,117 @@ requires an explicit, human-approved design change. It is hard boundary 4 in
 
 ## 3. Wiring it into a client
 
-All paths below are placeholders. Substitute your own.
+### The whole configuration
 
-### Claude Code
-
-```jsonc
-// .mcp.json in your project, or the user-level MCP config
-{
-  "mcpServers": {
-    "agent-secrets": {
-      "command": "agent-secrets-mcp",
-      "args": ["--project", "ezjob"],
-      "env": {
-        "AGENT_SECRETS_CONFIG_DIR": "/Users/PLACEHOLDER/.config/agent-secrets"
-      }
-    }
-  }
-}
+```
+command:      agent-secrets-mcp
+transport:    stdio
+arguments:    none
+environment:  none required
 ```
 
-If the binary is not on `PATH`, give an absolute path:
+**`agent-secrets-mcp` reads no command-line arguments at all.** Everything it needs
+comes from the enrolment the CLI already performed on this machine: the device id and
+Bitwarden project from `<config-dir>/config.json`, the access token from the OS
+credential store at call time, and the policy — if any — from
+`<config-dir>/policy.yaml`. There is no `--project`, no `--policy`, and no flag that
+would let a client hand the server a different scope than the one its human granted.
+
+*(Earlier revisions of this page showed `args: ["--project", "ezjob"]` and a
+`--policy` flag. Neither ever existed. Corrected 2026-08-16.)*
+
+There is deliberately **no** environment variable that supplies the Bitwarden access
+token. An environment variable is inherited by every child process, which is the
+opposite of what a device credential should be.
+
+Four optional variables, none of them a credential the server needs to start:
+
+| Variable | Effect |
+| -------- | ------ |
+| `AGENT_SECRETS_MCP_READ_ONLY=1` | No deletion, no execution, no link minting, and no CLI command handed over. |
+| `AGENT_SECRETS_HOME` | Point at a different config directory. |
+| `AGENT_SECRETS_API_URL` | Base URL of a running one-time-link API. Enables the request tools' link path. |
+| `AGENT_SECRETS_ADAPTER_TOKEN` | The API's adapter credential. Required with, and only with, the above. |
+
+### Per client
+
+Every client below gets the same three facts; only the file format differs.
+
+| Client | Where | Status |
+| ------ | ----- | ------ |
+| Claude Code | `.mcp.json` in the project, or the user-level MCP config | Run here |
+| Codex | `~/.codex/config.toml` | Documented shape |
+| OpenClaw | `openclaw.json`, or `openclaw mcp add` | Documented shape |
+| Hermes | its MCP server block | Documented shape |
+| Anything else | wherever it keeps stdio servers | — |
+
+"Documented shape" means exactly that: it follows each project's published
+configuration format, and we have not run it ourselves. A snippet nobody has executed
+is a bug report waiting to happen, so it is labelled rather than implied.
+
+**Claude Code**
 
 ```jsonc
-{
-  "mcpServers": {
-    "agent-secrets": {
-      "command": "/usr/local/bin/agent-secrets-mcp",
-      "args": ["--project", "ezjob", "--policy", "/path/to/agent-secrets.policy.yaml"]
-    }
-  }
-}
+// .mcp.json
+{ "mcpServers": { "agent-secrets": { "command": "agent-secrets-mcp", "args": [], "env": {} } } }
 ```
 
-### Codex
+**Codex**
 
 ```toml
 # ~/.codex/config.toml
 [mcp_servers.agent-secrets]
 command = "agent-secrets-mcp"
-args = ["--project", "ezjob"]
+args = []
 ```
 
-### Any other MCP client
+**OpenClaw**
 
-The server speaks MCP over **stdio**. It needs:
+```jsonc
+// openclaw.json — or: openclaw mcp add agent-secrets --command agent-secrets-mcp
+{ "mcp": { "servers": { "agent-secrets": { "command": "agent-secrets-mcp", "transport": "stdio" } } } }
+```
 
-- the command `agent-secrets-mcp` (installed by `@bx-labs/agent-secrets-mcp`);
-- `--project <slug>`, or `AGENT_SECRETS_PROJECT` in its environment;
-- optionally `--policy <path>` and `AGENT_SECRETS_CONFIG_DIR`;
-- an enrolled machine — the server reads the device token from the Keychain at call
-  time, exactly as the CLI does.
+**Hermes** already loads Bitwarden Secrets Manager at startup through
+`hermes secrets bitwarden setup`. Agent Secrets complements that rather than replacing
+it: let Hermes keep loading what it needs at boot, and use Agent Secrets for creating,
+rotating and scoped execution. Do not point both at the same responsibility.
 
-There is deliberately **no** environment variable that supplies the Bitwarden access
-token to the server. An environment variable is inherited by every child process,
-which is the opposite of what a device credential should be.
+**Any other client**: the server speaks MCP over stdio. Launch `agent-secrets-mcp`
+with no arguments. If it is not on `PATH`, give the absolute path as the command.
+Remote HTTP transport is deliberately not implemented.
 
-Verify the wiring by asking the client to call `secret_health`. If it reports
-`reachable: true`, you are done. If it reports `AUTH_REQUIRED`, run
-`agent-secrets init` — see [`device-enrollment.md`](device-enrollment.md).
+Verify the wiring by asking the client to call `secret_health`. `reachable: true` and
+you are done. `AUTH_REQUIRED` means this machine is not enrolled — run
+`agent-secrets init`, see [`device-enrollment.md`](device-enrollment.md).
+
+### Available is not the same as applied
+
+Wiring the server in makes the tools *reachable*. It does not make an agent *use*
+them, and the difference is where this product succeeds or fails in practice.
+
+The server sends `instructions` at initialize — when a credential is involved, what to
+never do with it, and which tool answers which need. That is the portable half of the
+process: every client receives the same text, and it is the reason an agent thinks to
+involve Agent Secrets at all rather than reaching for a `.env` the way credential
+problems have always been solved.
+
+**It is guidance, not enforcement, and the boundary is worth stating plainly:**
+
+- A client may not surface `instructions` to its model at all. Some do not.
+- MCP cannot intercept what an agent does *outside* it. An agent with a shell can
+  write a `.env`, read one, echo a variable, or paste a value into a file, and no MCP
+  server sees any of it.
+- What *is* enforced in code: no tool returns a value; policy is evaluated before every
+  action; `run_with_secrets` output is redacted; every result is walked by
+  `assertNoValueFields`; the tool inventory is fixed at seven.
+
+So the process rests on both halves. The code guarantees that using this server
+correctly cannot leak a value. The instructions are what make an agent use it in the
+first place. If you need the second half to be a guarantee rather than a strong
+default, the lever is the environment the agent runs in — a sandbox, a separate OS
+user, an executable allow-list — not a longer prompt. See
+[`threat-model.md`](threat-model.md) §4.9.
 
 ---
 
