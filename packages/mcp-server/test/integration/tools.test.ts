@@ -212,6 +212,58 @@ describe('MCP server', () => {
     expect(textOf(result)).toContain('not configured');
   });
 
+  /**
+   * Without the link service there is still a way through: the human types the
+   * value at the CLI's hidden prompt. The command is built here rather than
+   * left to the model to compose, because the human is about to paste it into a
+   * shell — see the note in test/unit/handoff-command.test.ts.
+   */
+  it('hands over the exact command to run when links are not configured', async () => {
+    await connect();
+    const text = textOf(
+      await client.callTool({
+        name: 'secret_add_request',
+        arguments: { ...DEV, name: 'NEW_KEY' },
+      }),
+    );
+
+    expect(text).toContain('agent-secrets add NEW_KEY --project ezjob --env development');
+    expect(text).toMatch(/exactly as written|verbatim/i);
+    // The agent must not "help" by collecting the value first.
+    expect(text).toMatch(/never see|do not ask/i);
+  });
+
+  it('hands over the rotate command for a rotation, not the add command', async () => {
+    await connect();
+    const text = textOf(
+      await client.callTool({
+        name: 'secret_rotate_request',
+        arguments: { ...DEV, name: 'OPENAI_API_KEY' },
+      }),
+    );
+
+    expect(text).toContain('agent-secrets rotate OPENAI_API_KEY --project ezjob --env development');
+    expect(text).not.toContain('agent-secrets add');
+  });
+
+  /**
+   * Read-only is the operator saying "this agent causes no writes". Handing
+   * over a command that produces one anyway would route around the setting,
+   * so the refusal stays a refusal.
+   */
+  it('hands over nothing in read-only mode', async () => {
+    await connect({ readOnly: true });
+    const text = textOf(
+      await client.callTool({
+        name: 'secret_add_request',
+        arguments: { ...DEV, name: 'NEW_KEY' },
+      }),
+    );
+
+    expect(text).toContain('read-only');
+    expect(text).not.toContain('agent-secrets add');
+  });
+
   it('refuses to rotate a secret that does not exist', async () => {
     await connect({ issuer: stubIssuer });
     const result = await client.callTool({
