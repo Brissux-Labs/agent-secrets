@@ -235,3 +235,75 @@ describe('assertNoValueFields', () => {
     expect(() => assertNoValueFields(wide)).not.toThrow();
   });
 });
+
+/**
+ * Regression: `assertNoValueFields` walks structures parsed from `bws` output
+ * and from MCP tool arguments, so it has to survive hostile shapes rather than
+ * turning a defensive check into a crash.
+ */
+describe('assertNoValueFields survives hostile shapes', () => {
+  it('does not blow the stack on a cyclic object', () => {
+    const cyclic: Record<string, unknown> = { name: 'API_KEY' };
+    cyclic['self'] = cyclic;
+
+    expect(() => assertNoValueFields(cyclic)).not.toThrow();
+  });
+
+  it('still finds a forbidden field reached through a cycle', () => {
+    const inner: Record<string, unknown> = { value: 'leaked' };
+    const outer: Record<string, unknown> = { inner };
+    inner['parent'] = outer;
+
+    expect(() => assertNoValueFields(outer)).toThrow(/forbidden field "value"/);
+  });
+
+  it('refuses a payload nested absurdly deep instead of recursing forever', () => {
+    let deep: Record<string, unknown> = {};
+    for (let level = 0; level < 600; level += 1) {
+      deep = { nested: deep };
+    }
+
+    expect(() => assertNoValueFields(deep)).toThrow(/nests deeper/);
+  });
+
+  it('catches a non-enumerable forbidden field', () => {
+    // Invisible to Object.entries and to JSON.stringify, but visible to
+    // util.inspect({ showHidden }) and to most non-JSON serializers.
+    const payload = {};
+    Object.defineProperty(payload, 'value', { value: 'leaked', enumerable: false });
+
+    expect(() => assertNoValueFields(payload)).toThrow(/forbidden field "value"/);
+  });
+
+  it('catches a forbidden field defined as a getter, without invoking it', () => {
+    let invoked = false;
+    const payload = {};
+    Object.defineProperty(payload, 'hash', {
+      enumerable: true,
+      get() {
+        invoked = true;
+        return 'computed';
+      },
+    });
+
+    expect(() => assertNoValueFields(payload)).toThrow(/forbidden field "hash"/);
+    // Calling an unknown getter while validating untrusted data is its own
+    // hazard; the walk reads descriptors rather than properties.
+    expect(invoked).toBe(false);
+  });
+
+  it('does not invoke a benign getter while walking', () => {
+    let invoked = false;
+    const payload = {};
+    Object.defineProperty(payload, 'provider', {
+      enumerable: true,
+      get() {
+        invoked = true;
+        return 'openai';
+      },
+    });
+
+    expect(() => assertNoValueFields(payload)).not.toThrow();
+    expect(invoked).toBe(false);
+  });
+});

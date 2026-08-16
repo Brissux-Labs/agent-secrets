@@ -1,3 +1,5 @@
+import { inspect } from 'node:util';
+
 /**
  * Sanitized domain errors.
  *
@@ -63,6 +65,40 @@ export abstract class AgentSecretsError extends Error {
     this.field = details.field;
     this.reference = details.reference;
     this.hint = details.hint;
+
+    // `cause` holds the original throwable — a `bws` failure whose message can
+    // embed the value or the access token. `Error`'s own `cause` is enumerable,
+    // which means the most natural line anyone writes in a catch block,
+    // `console.error(error)`, prints it verbatim through util.inspect.
+    //
+    // Making it non-enumerable keeps it reachable for a debugger while removing
+    // it from inspect, spread, and Object.entries. The custom inspect below
+    // closes the same hole for the error as a whole.
+    if (details.cause !== undefined) {
+      Object.defineProperty(this, 'cause', {
+        value: details.cause,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
+
+  /**
+   * What `console.error(error)` and `util.inspect(error)` print.
+   *
+   * Deliberately the same safe shape as `toSafeJSON`, so a sink that never
+   * learned about `toSafeJSON` still cannot print a raw backend message.
+   */
+  [inspect.custom](): string {
+    const parts = [`${this.name}(${this.code}): ${this.message}`];
+    if (this.reference !== undefined) {
+      parts.push(`reference=${this.reference}`);
+    }
+    if (this.field !== undefined) {
+      parts.push(`field=${this.field}`);
+    }
+    return parts.join(' ');
   }
 
   /**

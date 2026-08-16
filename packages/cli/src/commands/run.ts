@@ -9,6 +9,7 @@ import {
   PolicyDeniedError,
 } from '@bx-labs/agent-secrets-core';
 import { confirm } from '@inquirer/prompts';
+import { loadApprovals, recordApproval } from '../approvals.js';
 import type { Context } from '../context.js';
 import { isApproved, loadManifest, selectCommand } from '../manifest.js';
 import { describeDryRun, runWithSecrets } from '../runner.js';
@@ -37,6 +38,8 @@ export interface RunOptions {
   readonly isolatedEnv?: boolean;
   readonly yes?: boolean;
   readonly cwd?: string;
+  readonly passThroughOutput?: boolean;
+  readonly propagateExitCode?: boolean;
 }
 
 export async function runRun(
@@ -98,12 +101,21 @@ export async function runRun(
       `${fmt.dim(`Injecting ${resolved.length} named secret(s) into: ${plan.command.join(' ')}`)}`,
   );
 
+  if (options.passThroughOutput) {
+    context.writer.note(
+      (fmt) =>
+        `${fmt.warn('!')} --pass-through-output: the child writes straight to this terminal. ` +
+        'Output redaction is off for this run.',
+    );
+  }
+
   const outcome = await runWithSecrets({
     executable,
     args,
     secrets: resolved,
     ...(options.isolatedEnv ? { inheritEnv: false } : {}),
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.passThroughOutput ? { passThroughOutput: true } : {}),
   });
 
   if (outcome.overridden.length > 0) {
@@ -132,7 +144,9 @@ export async function runRun(
     context.writer.ok(
       {
         status: outcome.code === 0 ? 'ok' : 'failed',
-        exitCode: outcome.code,
+        // The child's real status, always reported here whatever the process
+        // exit code ends up being.
+        childExitCode: outcome.code,
         signal: outcome.signal,
         injected: outcome.injected,
         durationMs: outcome.durationMs,
@@ -141,12 +155,37 @@ export async function runRun(
     );
   }
 
-  // FR-RUN-004. The child's exit code is ours, so scripts and agents see what
-  // actually happened rather than a wrapper's opinion of it.
-  if (outcome.signal) {
-    throw new ChildFailedError(`The command was terminated by ${outcome.signal}.`, {});
+  if (outcome.code === 0 && outcome.signal === null) {
+    return 0;
   }
-  return outcome.code;
+
+  if (options.propagateExitCode) {
+    // Opt-in, for shell and CI callers who want `agent-secrets run -- pytest`
+    // to behave like `pytest`. A signal has no exit code of its own, so it
+    // still surfaces as CHILD_FAILED.
+    if (outcome.signal) {
+      throw new ChildFailedError(`The command was terminated by ${outcome.signal}.`, {
+        hint: 'The secrets resolved and policy passed; the failure is in the command.',
+      });
+    }
+    return outcome.code;
+  }
+
+  // Default: exit codes 2–10 belong to this tool.
+  //
+  // Forwarding the child's status would make them ambiguous — a caller could
+  // not tell "policy denied" (4) from "the child returned 4" — and the caller
+  // most likely to get that wrong is an automated one making a security
+  // decision. The child's real status is in the JSON envelope, and
+  // `--propagate-exit-code` is there for callers who prefer the ambiguity.
+  throw new ChildFailedError(
+    outcome.signal
+      ? `The command was terminated by ${outcome.signal}.`
+      : `The command exited with status ${outcome.code}.`,
+    {
+      hint: "The secrets resolved and policy passed; the failure is in the command. Use --json for the child's exact status, or --propagate-exit-code to return it directly.",
+    },
+  );
 }
 
 interface RunPlan {
@@ -205,25 +244,39 @@ async function planFromManifest(context: Context, options: RunOptions): Promise<
   const commandName = options.manifest as string;
   const entry = selectCommand(loaded, commandName);
 
-  // Approval is keyed by the manifest's content hash, so editing a command
-  // invalidates the approval it previously carried.
-  const approvals = { version: 1 as const, approvals: [] };
-  if (entry.approval === 'required' && !isApproved(approvals, loaded, commandName)) {
-    if (!options.yes) {
+  // Approval is keyed by the manifest's content digest, so editing a command
+  // invalidates the approval it previously carried. A production command always
+  // needs one; other commands inherit the manifest's own declaration.
+  const needsApproval = entry.approval === 'required' || entry.environment === 'production';
+
+  if (needsApproval) {
+    const approvals = await loadApprovals(context.paths.home);
+
+    if (!isApproved(approvals, loaded, commandName)) {
       if (!process.stdin.isTTY || context.writer.isJson) {
-        throw new PolicyDeniedError(`The manifest command "${commandName}" requires approval.`, {
-          hint: 'Run it interactively to review and approve it, or pass --yes.',
+        // An agent runs non-interactively, which is exactly the caller this
+        // gate exists for. `--yes` deliberately does not help here: the whole
+        // point is a human looking at the command outside the model's control.
+        throw new PolicyDeniedError(`The manifest command "${commandName}" is not approved.`, {
+          hint: 'Run it once in a terminal to review and approve it. This cannot be waived non-interactively.',
         });
       }
+
       const confirmed = await confirm({
         message: `Run "${entry.command.join(' ')}" in ${loaded.manifest.project}/${entry.environment} with ${entry.secrets.length} secret(s)?`,
         default: false,
       });
       if (!confirmed) {
-        throw new PolicyDeniedError('Not approved.', {
-          hint: 'The command was not run.',
+        throw new PolicyDeniedError('Not approved. The command was not run.', {
+          hint: `Review ${loaded.path} before approving it.`,
         });
       }
+
+      await recordApproval(context.paths.home, loaded, commandName);
+      context.writer.note(
+        (fmt) =>
+          `${fmt.dim(`Approved "${commandName}" for this version of ${loaded.path}. Editing the manifest will ask again.`)}`,
+      );
     }
   }
 

@@ -41,7 +41,12 @@ describe('MCP server', () => {
   };
 
   const connect = async (
-    options: { policy?: PolicyEngine; readOnly?: boolean; issuer?: LinkIssuer } = {},
+    options: {
+      policy?: PolicyEngine;
+      readOnly?: boolean;
+      issuer?: LinkIssuer;
+      onLinkIssued?: (issued: { action: string; reference: string; url: string }) => void;
+    } = {},
   ): Promise<void> => {
     const backend = new BitwardenBackend({
       client: new BwsClient({
@@ -57,6 +62,7 @@ describe('MCP server', () => {
       policy: options.policy ?? new PolicyEngine(defaultPolicy()),
       ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
       ...(options.issuer === undefined ? {} : { linkIssuer: options.issuer }),
+      ...(options.onLinkIssued === undefined ? {} : { onLinkIssued: options.onLinkIssued }),
     });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -165,17 +171,34 @@ describe('MCP server', () => {
     expect(textOf(result)).toContain('"exists": false');
   });
 
-  it('returns a one-time link for an add request, never a value', async () => {
-    await connect({ issuer: stubIssuer });
+  it('acknowledges an add request without putting the link in the model context', async () => {
+    // The link is a two-minute write capability for one named reference. In a
+    // tool result it would sit in the model's context, its provider's logs, and
+    // any transcript the user pastes elsewhere — reachable by an agent with a
+    // browser tool, or one that has been prompt-injected. It goes to the human
+    // out of band instead.
+    const delivered: string[] = [];
+
+    await connect({
+      issuer: stubIssuer,
+      onLinkIssued: ({ url }) => delivered.push(url),
+    });
+
     const result = await client.callTool({
       name: 'secret_add_request',
       arguments: { ...DEV, name: 'NEW_KEY' },
     });
     const text = textOf(result);
 
-    expect(text).toContain('https://secrets.example.test/input/');
-    expect(text).toContain('You will not see the value');
+    expect(text).toContain('NEW_KEY');
+    expect(text).toContain('out of band');
+    expect(text).not.toContain('https://');
+    expect(text).not.toContain('fake-one-time-token');
     expect(text).not.toContain(canary);
+
+    // The host did receive it, so the human can still be given the link.
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toContain('https://secrets.example.test/input/');
   });
 
   it('says so plainly when secure links are not configured', async () => {
@@ -385,7 +408,8 @@ describe('MCP server', () => {
       arguments: { project: 'ezjob', environment: 'production', name: 'PROD_KEY' },
     });
 
-    expect(textOf(result)).toContain('https://secrets.example.test/input/');
+    expect(textOf(result)).toContain('out of band');
+    expect((result as { isError?: boolean }).isError).toBeFalsy();
   });
 
   it('rejects a malformed reference before reaching the backend', async () => {

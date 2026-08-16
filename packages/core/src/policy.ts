@@ -186,7 +186,18 @@ export class PolicyEngine {
       };
     }
 
-    if (action === 'run' && context.executable !== undefined) {
+    if (action === 'run') {
+      // Fail closed on an absent executable. Consulting the deny list only
+      // when the caller remembered to supply one would make the entire list
+      // opt-in from the call site — a caller that forgets gets a permissive
+      // answer, which is precisely backwards for a security control.
+      if (context.executable === undefined) {
+        return {
+          allowed: false,
+          requiresHumanApproval: false,
+          reason: 'A "run" decision requires the executable; refusing without one.',
+        };
+      }
       const executableDecision = this.#checkExecutable(context.executable);
       if (executableDecision) {
         return executableDecision;
@@ -224,18 +235,22 @@ export class PolicyEngine {
   }
 
   #checkExecutable(executable: string): PolicyDecision | null {
-    // Compare on the basename so that `/bin/sh` and `sh` are the same rule.
-    const basename = executable.split('/').pop() ?? executable;
+    const basename = normalizeExecutable(executable);
     const { denyExecutables, allowExecutables } = this.#document.commands;
 
-    if (denyExecutables.includes(basename)) {
+    if (denyExecutables.map(normalizeExecutable).includes(basename)) {
       return {
         allowed: false,
         requiresHumanApproval: false,
         reason: `Executable "${basename}" is on the deny list.`,
       };
     }
-    if (allowExecutables.length > 0 && !allowExecutables.includes(basename)) {
+    // An allow list is a boundary, so it is matched strictly: an entry
+    // containing a separator must equal the full path, and a bare-name entry
+    // matches only a bare name. Comparing basenames both ways would let
+    // `/tmp/evil/npm` satisfy an allow list of `["npm"]` — defeating the
+    // boundary by naming a file.
+    if (allowExecutables.length > 0 && !isAllowed(executable, allowExecutables)) {
       return {
         allowed: false,
         requiresHumanApproval: false,
@@ -244,4 +259,46 @@ export class PolicyEngine {
     }
     return null;
   }
+}
+
+/**
+ * Reduce an executable to the token the deny and allow lists are written in.
+ *
+ * The naive `split('/').pop()` misses several spellings of the same program:
+ * `/bin/sh`, `./sh`, `sh ` with a trailing space, `SH` on a case-insensitive
+ * filesystem. Each of those would otherwise walk straight past a list entry of
+ * `sh`. A backslash is treated as a separator too, so a Windows-style path does
+ * not become a bypass on a case-insensitive volume.
+ *
+ * This does not make a denylist sufficient — `docs/threat-model.md` is explicit
+ * that a determined agent can copy a shell to another name — but it removes the
+ * spellings that would defeat it by accident or with no effort at all.
+ */
+/**
+ * Strict allow-list matching.
+ *
+ * An entry with a path separator is a path and must match exactly (after
+ * trimming). An entry without one names a program and matches only an
+ * invocation that also has no path, so a caller cannot smuggle a different
+ * binary in by giving a directory.
+ */
+function isAllowed(executable: string, allowExecutables: readonly string[]): boolean {
+  const invoked = executable.trim();
+  const invokedHasPath = /[/\\]/.test(invoked);
+
+  return allowExecutables.some((entry) => {
+    const candidate = entry.trim();
+    const entryHasPath = /[/\\]/.test(candidate);
+
+    if (entryHasPath) {
+      return candidate === invoked;
+    }
+    return !invokedHasPath && normalizeExecutable(candidate) === normalizeExecutable(invoked);
+  });
+}
+
+function normalizeExecutable(executable: string): string {
+  const trimmed = executable.trim();
+  const basename = trimmed.split(/[/\\]/).pop() ?? trimmed;
+  return basename.toLowerCase();
 }

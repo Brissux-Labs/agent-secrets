@@ -50,10 +50,47 @@ describe('defaultPolicy', () => {
   it('allows the full lifecycle in development', () => {
     const engine = new PolicyEngine();
     for (const action of ACTIONS) {
-      const decision = engine.evaluate({ action, target: ref('ezjob', 'development') });
+      const decision = engine.evaluate({
+        action,
+        target: ref('ezjob', 'development'),
+        // `run` is the one action whose decision also depends on what is being
+        // run, so the executable is part of asking the question properly.
+        ...(action === 'run' ? { executable: 'npm' } : {}),
+      });
       expect(decision.allowed, action).toBe(true);
       expect(decision.requiresHumanApproval, action).toBe(false);
     }
+  });
+
+  it('refuses a run decision made without an executable', () => {
+    // Fail closed. If the deny list applied only when a caller remembered to
+    // pass an executable, the list would be opt-in from the call site — a
+    // caller that forgets would get a permissive answer, which is exactly
+    // backwards.
+    const engine = new PolicyEngine();
+    const decision = engine.evaluate({ action: 'run', target: ref('ezjob', 'development') });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toMatch(/requires the executable/i);
+  });
+
+  it.each([
+    ['a bare name', 'sh'],
+    ['an absolute path', '/bin/sh'],
+    ['a relative path', './sh'],
+    ['surrounding whitespace', ' sh '],
+    ['different case', 'SH'],
+    ['a nested path', '/usr/local/bin/sh'],
+  ])('blocks a denied executable spelled as %s', (_label, executable) => {
+    const engine = new PolicyEngine();
+    const decision = engine.evaluate({
+      action: 'run',
+      target: ref('ezjob', 'development'),
+      executable,
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toMatch(/deny list/i);
   });
 
   it('allows only list and describe in production', () => {
@@ -275,15 +312,50 @@ describe('executable rules', () => {
       }),
     );
     expect(restricted.evaluate({ action: 'run', target, executable: 'node' }).allowed).toBe(true);
-    expect(
-      restricted.evaluate({ action: 'run', target, executable: '/usr/bin/node' }).allowed,
-    ).toBe(true);
 
     for (const executable of ['python', 'curl', 'sh', '/bin/sh']) {
       const decision = restricted.evaluate({ action: 'run', target, executable });
       expect(decision.allowed, executable).toBe(false);
       expect(decision.reason).toContain('allow list');
     }
+  });
+
+  it('does not let a path satisfy a bare-name allow list entry', () => {
+    // The boundary this protects: with basename matching on both sides,
+    // `/tmp/evil/node` satisfies an allow list of `["node"]`, and an agent that
+    // chooses the path chooses the binary. A bare-name entry therefore matches
+    // only a bare-name invocation, which `spawn` resolves through a PATH the
+    // caller does not control.
+    const restricted = new PolicyEngine(
+      parsePolicy({
+        version: 1,
+        commands: { denyExecutables: [], allowExecutables: ['node'] },
+      }),
+    );
+
+    for (const executable of ['/usr/bin/node', './node', '/tmp/evil/node', '../node']) {
+      const decision = restricted.evaluate({ action: 'run', target, executable });
+      expect(decision.allowed, executable).toBe(false);
+    }
+  });
+
+  it('allows an absolute path when the allow list names that exact path', () => {
+    // The escape hatch for someone who genuinely runs a binary from a fixed
+    // location: say so, and it is honoured — but only that path.
+    const restricted = new PolicyEngine(
+      parsePolicy({
+        version: 1,
+        commands: { denyExecutables: [], allowExecutables: ['/opt/homebrew/bin/node'] },
+      }),
+    );
+
+    expect(
+      restricted.evaluate({ action: 'run', target, executable: '/opt/homebrew/bin/node' }).allowed,
+    ).toBe(true);
+    expect(
+      restricted.evaluate({ action: 'run', target, executable: '/tmp/evil/node' }).allowed,
+    ).toBe(false);
+    expect(restricted.evaluate({ action: 'run', target, executable: 'node' }).allowed).toBe(false);
   });
 
   it('applies the deny list before the allow list', () => {

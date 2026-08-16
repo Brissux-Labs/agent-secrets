@@ -205,8 +205,12 @@ status is in `data.childExitCode` and `data.signal`; the process itself exits 9.
 The reason: exit codes 2–10 belong to this tool. If `run` forwarded a child's exit
 code 4, a caller could not distinguish "policy denied" from "the child returned 4" —
 and the caller most likely to get that wrong is an automated one making a security
-decision. A `--propagate-exit-code` flag for callers who accept that ambiguity is
-under discussion and not decided.
+decision.
+
+`--propagate-exit-code` exists for callers who want the ambiguity: with it,
+`agent-secrets run -- pytest` exits exactly as `pytest` would. Use it in a shell or a
+CI step where you are the one reading the result; do not use it where an agent
+branches on the code.
 
 **What a script should do:** treat 9 as "your command failed" and read
 `data.childExitCode` for the detail. Critically: **9 means the secrets were resolved,

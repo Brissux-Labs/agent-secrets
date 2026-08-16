@@ -1,11 +1,15 @@
 import { runWithSecrets } from '@bx-labs/agent-secrets/runner';
 import {
+  type AuditEventInput,
+  type AuditSink,
   assertNoValueFields,
+  buildAuditEvent,
   formatRef,
   formatScope,
   isAgentSecretsError,
   makeRef,
   makeScope,
+  nullAuditSink,
   type PolicyEngine,
   type SecretBackend,
 } from '@bx-labs/agent-secrets-core';
@@ -56,11 +60,42 @@ export interface McpServerOptions {
   readonly readOnly?: boolean;
   readonly maxOutputBytes?: number;
   readonly cwd?: string;
+  /**
+   * Called with the issued link so the host can deliver it to the human.
+   *
+   * Kept out of the tool result on purpose — see `issueLink`. The stdio server
+   * writes it to stderr, which the operator can see and the model cannot.
+   */
+  readonly onLinkIssued?: (issued: { action: string; reference: string; url: string }) => void;
+  /** How the human receives the link. Reported to the agent, not acted on. */
+  readonly linkDelivery?: string;
+  /**
+   * Where agent-driven operations are recorded.
+   *
+   * Without one, the interface most likely to be driven by something that was
+   * prompt-injected is also the only one that leaves no trace — an agent could
+   * delete a secret or inject credentials into a command and nothing would show
+   * who did what. The stdio server wires the CLI's own JSONL sink here so the
+   * record lands beside the human's.
+   */
+  readonly audit?: AuditSink;
 }
 
 export function createMcpServer(options: McpServerOptions): McpServer {
   const { backend, policy } = options;
   const maxOutputBytes = options.maxOutputBytes ?? 64 * 1024;
+  const audit = options.audit ?? nullAuditSink;
+
+  /** Record an agent-driven operation. Never throws into a tool result. */
+  const record = async (event: Omit<AuditEventInput, 'actorType'>): Promise<void> => {
+    try {
+      await audit.record(buildAuditEvent({ ...event, actorType: 'agent' }));
+    } catch {
+      // An audit sink that cannot write must not turn a permitted operation
+      // into a failure the agent will simply retry. `doctor` reports the sink's
+      // health separately.
+    }
+  };
 
   const server = new McpServer(
     { name: 'agent-secrets', version: '0.1.0' },
@@ -123,7 +158,19 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     { description: TOOL_DESCRIPTIONS.secret_add_request, inputSchema: secretAddRequestArgs.shape },
     async (args) => {
       const ref = makeRef(args);
+      if (options.readOnly) {
+        // A link is a write capability with a delay on it. A server an operator
+        // deliberately set to read-only must not hand one out.
+        return fail('This server runs in read-only mode. Secure input links are disabled.');
+      }
       policy.assert({ action: 'request-create', target: ref });
+      await record({
+        actorId: 'mcp',
+        operation: 'request-create',
+        reference: formatRef(ref),
+        secretNames: [ref.name],
+        outcome: 'success',
+      });
       return await issueLink(options, 'create', ref);
     },
   );
@@ -136,6 +183,9 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     },
     async (args) => {
       const ref = makeRef(args);
+      if (options.readOnly) {
+        return fail('This server runs in read-only mode. Secure input links are disabled.');
+      }
       policy.assert({ action: 'request-rotate', target: ref });
 
       // Refuse early when the secret does not exist: an agent that "rotates"
@@ -145,6 +195,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       if (existing === null) {
         return fail(`${formatRef(ref)} does not exist. Use secret_add_request to create it.`);
       }
+      await record({
+        actorId: 'mcp',
+        operation: 'request-rotate',
+        reference: formatRef(ref),
+        secretNames: [ref.name],
+        outcome: 'success',
+      });
       return await issueLink(options, 'rotate', ref);
     },
   );
@@ -176,6 +233,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }
 
       await backend.delete(ref);
+      await record({
+        actorId: 'mcp',
+        operation: 'delete',
+        reference: expected,
+        secretNames: [ref.name],
+        outcome: 'success',
+      });
       return ok({ reference: expected, deleted: true });
     },
   );
@@ -220,6 +284,16 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             ? {}
             : { cwd: options.cwd }
           : { cwd: args.cwd }),
+      });
+
+      await record({
+        actorId: 'mcp',
+        operation: 'run',
+        reference: formatScope(scope),
+        secretNames: [...outcome.injected],
+        commandExecutable: executable,
+        outcome: outcome.code === 0 ? 'success' : 'failure',
+        durationMs: outcome.durationMs,
       });
 
       return ok({
@@ -270,14 +344,27 @@ async function issueLink(
   }
   try {
     const issued = await options.linkIssuer.issue({ action, ref });
+
+    // The URL is deliberately absent from the result.
+    //
+    // A URL in a tool result is a URL in the model's context, its provider's
+    // logs, and any transcript the user pastes elsewhere. It is a two-minute
+    // write capability against one named reference, so an agent with a browser
+    // tool — or one that has been prompt-injected — could use it directly.
+    // The link goes to the human out of band; the agent learns only that a
+    // request exists and when it expires.
+    options.onLinkIssued?.({ action, reference: formatRef(ref), url: issued.url });
+
     return ok({
+      requestId: issued.id,
       reference: formatRef(ref),
       action,
-      url: issued.url,
       expiresAt: issued.expiresAt,
+      deliveredVia: options.linkDelivery ?? 'out-of-band',
       instruction:
-        'Give this link to the human. It opens a secure form, works once, and expires shortly. ' +
-        'You will not see the value they enter — verify afterwards with secret_describe.',
+        'A one-time link was sent to the human out of band. It works once and expires shortly. ' +
+        'Tell them to check for it, then wait. You will never see the link or the value they ' +
+        'enter — verify afterwards with secret_describe.',
     });
   } catch (error) {
     return fail(

@@ -357,9 +357,42 @@ Read this section twice. It is the most useful part of the document.
     Secrets is a good moment to rotate everything; it is not retroactive.
 11. **Availability.** Bitwarden down means `run` fails closed. That is the correct
     behaviour and it is still an outage. See [`recovery.md`](recovery.md).
-12. **Anything at all, today.** The mitigations marked *planned* are not implemented.
-    This is pre-release software with an unproven core (the domain package has no unit
-    tests yet) and no external review. Do not put a production credential behind it.
+12. **A stolen device token reads every environment.** Bitwarden grants permissions per
+    *project*, and this product stores all of a project's environments under one
+    Bitwarden project so that two machines can share one credential. So the separation
+    between `development` and `production` is enforced by our policy engine, on the
+    machine, and not by the vault. Anyone holding a device token can read production
+    values directly through `bws`, whatever our policy says. If that matters to you,
+    use a separate Bitwarden project — and a separate enrolment — for production.
+13. **The value is briefly visible in the process table on write.** `bws secret create`
+    and `bws secret edit` take the value as a command-line argument. For the
+    milliseconds `bws` runs, another process owned by the same user can see it in
+    `ps`. The adapter probes for a stdin transport and prefers it, but falls back to
+    argv when the installed `bws` does not offer one. The same applies to
+    `security add-generic-password -w` during `init`. Both windows only help an
+    attacker already running code as you — who can equally read the Keychain entry
+    afterwards — but they are real and they are not mitigated away.
+14. **On platforms without a supported OS credential store, the device token is a
+    file.** macOS uses the Keychain. Everywhere else — and anywhere
+    `AGENT_SECRETS_CREDENTIAL_STORE=file` is set — the token sits at rest in a `0600`
+    file, protected only by filesystem permissions, with no per-application access
+    control. `doctor` says which store is in use. This is strictly weaker and is
+    offered so the code paths are testable and so a Linux user can make an informed
+    choice, not because it is equivalent.
+15. **`--pass-through-output` turns off output redaction for that run.** By default
+    `run` pipes the child's stdout and stderr through a redaction transform. Some
+    commands need a real terminal, and that flag gives them one — at the cost of the
+    filter. The CLI warns on every run that uses it.
+16. **The MCP `secret_add_request` tool returns the link to the model.** The link is a
+    two-minute, single-use write capability for one named reference. Handing it to an
+    agent is what makes "ask the human to fill this in" work at all, but it means the
+    link exists in the model's context and its provider's logs. A prompt-injected
+    agent can therefore mint a link and ask a human to open it. It cannot read the
+    value that human enters. Set `AGENT_SECRETS_MCP_READ_ONLY=1` to disable link
+    minting entirely.
+17. **Pre-release software, no external review.** The core is covered by tests and the
+    quality gates are green, but no third party has reviewed this. Do not put a
+    production credential behind it yet.
 
 ---
 
@@ -367,14 +400,20 @@ Read this section twice. It is the most useful part of the document.
 
 Tracked here so they are not quietly forgotten.
 
-- **How does `bws` receive a value on write?** If only as a command-line argument, the
-  value is briefly visible in the process table. Whoever finishes
-  `packages/backend-bitwarden` must establish this, choose the least-exposing option,
-  and record the answer here as a mitigation or a residual risk.
-- **Should `run` support `--propagate-exit-code`?** Convenient for callers, and it
-  blurs an otherwise clean exit-code contract. Undecided.
+**Resolved since the first draft**, and moved into §5 as residual risks rather than
+left here as intentions: how `bws` receives a value on write (§5.13), whether `run`
+propagates the child's exit code (it does — see [`exit-codes.md`](exit-codes.md) for
+what that costs), and whether redaction on `run` output is always on (it is, unless
+`--pass-through-output` is passed — §5.15).
+
+Still open:
+
 - **Should the one-time link be bound to a device or a browser session?** It would
   close 4.4's residual risk at the cost of the flow's main convenience: opening the
   link on a phone. Undecided.
-- **Redaction on `run` output is opt-out or always on?** Currently specified as always
-  on. A child that produces binary output may be mangled by it.
+- **Should production use a separate Bitwarden project by default?** It would turn
+  §5.12 from a policy-engine guarantee into a vault-enforced one, at the cost of a
+  second enrolment on every machine. Leaning yes, before any production use.
+- **Should the file-backed credential store require an explicit opt-in on Linux?**
+  Today it is the automatic fallback. Making it explicit would stop a user silently
+  getting the weaker store, at the cost of a worse first run.

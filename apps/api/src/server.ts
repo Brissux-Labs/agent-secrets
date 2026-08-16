@@ -8,6 +8,7 @@ import {
   InvalidInputError,
   isAgentSecretsError,
   makeRef,
+  PolicyEngine,
   projectSlugSchema,
   SecretValue,
   secretNameSchema,
@@ -52,6 +53,8 @@ import { RequestStore } from './store.js';
 export interface BuildServerOptions {
   readonly config: ApiConfig;
   readonly store?: RequestStore;
+  /** Defaults to the built-in restrictive policy. */
+  readonly policy?: PolicyEngine;
   /** Injected in tests so no real vault is touched. */
   readonly backendFactory?: () => {
     create: BitwardenBackend['create'];
@@ -74,6 +77,7 @@ const createRequestBodySchema = z
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
   const { config } = options;
   const store = options.store ?? new RequestStore(config.databasePath);
+  const policy = options.policy ?? new PolicyEngine();
   const audit = new SqliteAuditSink(store.database);
 
   const backend =
@@ -171,6 +175,31 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
         environment: parsed.data.environment,
         name: parsed.data.name,
       });
+
+      // The policy engine gates this path too.
+      //
+      // Without it, the Telegram and MCP route around every restriction the CLI
+      // enforces: a production write denied at the terminal would succeed by
+      // asking the bot for a link. The policy is the same document; the point
+      // is that it is consulted everywhere a write can begin, not only where it
+      // is most visible.
+      const decision = policy.evaluate({
+        action: parsed.data.action === 'create' ? 'request-create' : 'request-rotate',
+        target: ref,
+      });
+      if (!decision.allowed) {
+        await audit.record(
+          buildAuditEvent({
+            actorType: 'telegram',
+            actorId: parsed.data.telegramUserId ?? 'adapter',
+            operation: parsed.data.action === 'create' ? 'request-create' : 'request-rotate',
+            reference: formatRef(ref),
+            outcome: 'denied',
+            errorCode: 'POLICY_DENIED',
+          }),
+        );
+        return reply.code(403).send({ error: 'policy_denied', reason: decision.reason });
+      }
 
       const issued = store.create({
         action: parsed.data.action,
@@ -424,15 +453,39 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
 
   app.get('/health/live', async () => ({ status: 'ok' }));
 
-  app.get('/health/ready', async (_request, reply) => {
-    const health = await backend.health();
-    // Reports reachability without listing projects or echoing any identifier
-    // that would map out the vault for an unauthenticated caller.
-    return reply.code(health.reachable ? 200 : 503).send({
-      status: health.reachable ? 'ready' : 'unavailable',
-      backendLatencyMs: health.latencyMs,
-    });
-  });
+  /**
+   * Readiness.
+   *
+   * Two things are deliberate here. The result is cached for a few seconds,
+   * because a naive implementation spawns two `bws` subprocesses per request
+   * and an unauthenticated caller could turn a load balancer's health check
+   * endpoint into a process-spawning amplifier. And it is rate limited like
+   * every other route, rather than relying on the caller being friendly.
+   */
+  let readinessCache: { at: number; reachable: boolean; latencyMs: number } | undefined;
+  const READINESS_TTL_MS = 5_000;
+
+  app.get(
+    '/health/ready',
+    {
+      config: {
+        rateLimit: { max: config.rateLimit.max, timeWindow: config.rateLimit.windowMs },
+      },
+    },
+    async (_request, reply) => {
+      const now = Date.now();
+      if (!readinessCache || now - readinessCache.at > READINESS_TTL_MS) {
+        const health = await backend.health();
+        readinessCache = { at: now, reachable: health.reachable, latencyMs: health.latencyMs };
+      }
+      // Reports reachability without listing projects or echoing any identifier
+      // that would map out the vault for an unauthenticated caller.
+      return reply.code(readinessCache.reachable ? 200 : 503).send({
+        status: readinessCache.reachable ? 'ready' : 'unavailable',
+        backendLatencyMs: readinessCache.latencyMs,
+      });
+    },
+  );
 
   app.addHook('onClose', async () => {
     store.close();

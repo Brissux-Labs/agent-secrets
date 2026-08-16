@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { format, inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import type { ErrorCode, ErrorDetails } from '../../src/errors.js';
 import {
@@ -246,5 +247,50 @@ describe('isAgentSecretsError', () => {
     expect(isAgentSecretsError('INVALID_INPUT')).toBe(false);
     expect(isAgentSecretsError(null)).toBe(false);
     expect(isAgentSecretsError(undefined)).toBe(false);
+  });
+});
+
+/**
+ * Regression: the most likely real-world leak path in this package.
+ *
+ * `toSafeError` sanitizes the *message*, but `Error.cause` is enumerable by
+ * default, so `console.error(error)` — the single most natural line to write in
+ * a catch block — printed the original `bws` stderr verbatim through
+ * util.inspect. Both holes are closed below; these tests keep them shut.
+ */
+describe('errors do not leak through inspection', () => {
+  // Generated per run, never literal: a canary written into a committed file is
+  // exactly what scripts/scan-secrets.mjs exists to catch, and it is right to
+  // catch it.
+  const leaked = canary();
+
+  it('does not print the cause when inspected', () => {
+    const wrapped = toSafeError(new Error(`bws failed: ${leaked}`));
+
+    expect(inspect(wrapped)).not.toContain(leaked);
+    expect(inspect(wrapped, { depth: 10 })).not.toContain(leaked);
+    expect(format('%s', wrapped)).not.toContain(leaked);
+    expect(format('%o', wrapped)).not.toContain(leaked);
+    expect(`${wrapped}`).not.toContain(leaked);
+  });
+
+  it('keeps the cause reachable for a debugger but out of enumeration', () => {
+    const original = new Error(`bws failed: ${leaked}`);
+    const wrapped = toSafeError(original);
+
+    // Still there when you go looking on purpose...
+    expect(wrapped.cause).toBe(original);
+    // ...but invisible to everything that enumerates.
+    expect(Object.keys(wrapped)).not.toContain('cause');
+    expect(JSON.stringify({ ...wrapped })).not.toContain(leaked);
+    expect(Object.propertyIsEnumerable.call(wrapped, 'cause')).toBe(false);
+  });
+
+  it('keeps a nested error out of an inspected object graph', () => {
+    const wrapped = toSafeError(new Error(leaked), { reference: 'bitwarden/p/development/K' });
+
+    expect(inspect({ context: 'while adding', error: wrapped }, { depth: 10 })).not.toContain(
+      leaked,
+    );
   });
 });

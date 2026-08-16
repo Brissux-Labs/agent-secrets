@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { JsonlAuditSink } from '@bx-labs/agent-secrets/audit-sink';
 import { loadConfig, resolvePaths } from '@bx-labs/agent-secrets/config';
 import {
   defaultCredentialStore,
@@ -70,11 +71,24 @@ async function main(): Promise<void> {
   const server = createMcpServer({
     backend,
     policy: new PolicyEngine(policyDocument),
+    // The same append-only file the CLI writes to: what an agent did and what
+    // the human did belong in one timeline, not two.
+    audit: new JsonlAuditSink(paths.auditFile, config.audit.maxBytes),
     // Read-only mode is opt-in through the environment so a user can wire a
     // deliberately harmless server into an untrusted project.
     readOnly: process.env['AGENT_SECRETS_MCP_READ_ONLY'] === '1',
     ...(apiUrl && adapterToken
-      ? { linkIssuer: new HttpLinkIssuer({ baseUrl: apiUrl, adapterToken }) }
+      ? {
+          linkIssuer: new HttpLinkIssuer({ baseUrl: apiUrl, adapterToken }),
+          linkDelivery: 'stderr',
+          // stderr, never stdout: stdout is the MCP transport, and anything
+          // written there both corrupts the protocol and reaches the model.
+          // The operator sees this in their client's server log; the model
+          // does not.
+          onLinkIssued: ({ action, reference, url }) => {
+            console.error(`\nagent-secrets: open this link to ${action} ${reference}\n  ${url}\n`);
+          },
+        }
       : {}),
   });
 

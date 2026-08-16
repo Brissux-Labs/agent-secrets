@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type Environment, ExpiredOrConsumedError } from '@bx-labs/agent-secrets-core';
 import type { Database } from 'better-sqlite3';
@@ -87,6 +87,12 @@ export class RequestStore {
       mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
     }
     this.#db = new DatabaseConstructor(databasePath);
+    // SQLite creates its file — and its WAL/SHM sidecars — with the process
+    // umask, which is 0644 by default. These rows record which credentials were
+    // requested for which project and environment, which is architectural
+    // information about the deployment, so they are not readable by other
+    // accounts on the host.
+    this.#restrictPermissions(databasePath);
     // WAL keeps a reader from blocking the writer that claims a token, which is
     // the operation that must never be delayed.
     this.#db.pragma('journal_mode = WAL');
@@ -95,6 +101,32 @@ export class RequestStore {
     // stay consumed across a crash, or a replay becomes possible.
     this.#db.pragma('synchronous = FULL');
     this.#migrate();
+    // WAL and SHM only come into existence once journal mode is set and the
+    // first write lands, so the tightening runs a second time here.
+    this.#restrictPermissions(databasePath);
+  }
+
+  /**
+   * Tighten permissions on the database and its sidecars.
+   *
+   * Called after opening and again after the first write, because WAL and SHM
+   * appear when journal mode is set rather than at open time.
+   */
+  #restrictPermissions(databasePath: string): void {
+    if (databasePath === ':memory:') {
+      return;
+    }
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      const path = `${databasePath}${suffix}`;
+      try {
+        if (existsSync(path)) {
+          chmodSync(path, 0o600);
+        }
+      } catch {
+        // A chmod failure on a volume that does not support it is not a reason
+        // to refuse to start; `doctor` and the deployment docs cover the rest.
+      }
+    }
   }
 
   #migrate(): void {

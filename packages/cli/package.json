@@ -29,6 +29,10 @@
     "./credential-store": {
       "types": "./dist/credential-store.d.ts",
       "default": "./dist/credential-store.js"
+    },
+    "./audit-sink": {
+      "types": "./dist/audit-sink.d.ts",
+      "default": "./dist/audit-sink.js"
     }
   },
   "files": [

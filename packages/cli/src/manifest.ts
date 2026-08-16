@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import {
   environmentSchema,
   InvalidInputError,
@@ -71,7 +71,14 @@ export interface LoadedManifest {
 export async function loadManifest(
   directory: string = process.cwd(),
 ): Promise<LoadedManifest | null> {
-  const path = join(directory, MANIFEST_FILENAME);
+  // Resolved, and then resolved again through symlinks below.
+  //
+  // Approvals are keyed by this path. A relative `--cwd` would otherwise
+  // produce a key like `./agent-secrets.yaml`, which means something different
+  // in every directory — so one human approval, given in a repository they
+  // reviewed, would silently authorise the same-named command in any other
+  // repository they happen to run from.
+  const path = join(resolve(directory), MANIFEST_FILENAME);
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
@@ -113,7 +120,8 @@ export async function loadManifest(
 
   return {
     manifest: result.data,
-    path,
+    // realpath so a symlinked manifest cannot borrow another path's approval.
+    path: await realpath(path).catch(() => path),
     digest: createHash('sha256').update(raw, 'utf8').digest('hex'),
   };
 }

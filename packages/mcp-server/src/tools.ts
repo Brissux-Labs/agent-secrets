@@ -111,13 +111,16 @@ export const TOOL_DESCRIPTIONS = {
     'or any fingerprint of it.',
 
   secret_add_request:
-    'Create a one-time secure link a human can open to enter a NEW secret value. ' +
-    'Returns the link and metadata. You will never see the value the human enters, ' +
-    'and you should not ask them to paste it into this conversation.',
+    'Ask a human to supply a NEW secret value. A one-time secure link is sent to them ' +
+    'out of band; it is never returned to you, so do not ask for it or try to open it. ' +
+    'You will never see the value they enter, and you should not ask them to paste it ' +
+    'into this conversation. After calling this, tell the human to check for the link ' +
+    'and wait; use secret_describe to confirm the record appeared.',
 
   secret_rotate_request:
-    'Create a one-time secure link a human can open to replace an EXISTING secret value. ' +
-    'Same guarantee: the value goes from their browser to the vault, never through here.',
+    'Ask a human to replace an EXISTING secret value. Same flow and same guarantee: the ' +
+    'link goes to them out of band, the value goes from their browser to the vault, and ' +
+    'neither reaches you.',
 
   secret_delete_request:
     'Request deletion of a secret. Requires the exact canonical reference as confirmation, ' +

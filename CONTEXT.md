@@ -115,6 +115,75 @@ down here or in `DOC.md` before you finish.
 
 ## Intervention timeline
 
+### 2026-08-16 — V1 implementation, then an adversarial review of it
+
+**What was built.** The whole V1 surface: the domain core, the redaction package,
+the Bitwarden adapter over a hardened subprocess runner, the CLI
+(`init`/`doctor`/`logout`/`add`/`list`/`describe`/`rotate`/`delete`/`run`), the
+single-tenant API with the one-time secure form, the Telegram adapter, and the
+stdio MCP server. 503 tests; lint, typecheck, secret scan and the no-raw-getter
+guard are green.
+
+**Then it was attacked.** Six independent review passes over the finished code —
+leak paths, auth and one-time tokens, injection, policy bypass, local state, and
+whether the documentation tells the truth — with every candidate finding handed to
+a separate agent whose job was to refute it. 33 candidates, 20 survived. The ones
+that mattered, all now fixed and pinned by tests:
+
+- **`run` never redacted child output.** `stdio` was `inherit`, so a child that
+  printed its own environment printed it to the terminal, the CI log, and any
+  agent transcript — while three documents said the opposite. The redacting
+  transform existed and was imported only to be re-exported. stdout and stderr are
+  now piped through it; `--pass-through-output` is the documented, warned escape
+  hatch for commands that need a real terminal.
+- **The output cap sliced values before redaction.** Truncating first was a
+  chosen-prefix oracle: pad to one byte short of the budget and the first
+  character of the secret survives, because exact-match redaction can no longer
+  see a whole occurrence. Repeat with one more byte and walk the prefix forward.
+  Redaction now runs on the intact buffer, with headroom, before truncation.
+- **The child inherited our own credentials.** `AGENT_SECRETS_ADAPTER_TOKEN` and
+  `BWS_ACCESS_TOKEN` were passed to a command the agent chose, whose output goes
+  back to the model. They are now stripped and tracked for redaction.
+- **A `run` decision with no executable skipped the deny list entirely** — the
+  list was effectively opt-in from the call site. Now denied outright.
+- **A bare-name allow list matched any path** with the same basename, so
+  `/tmp/evil/npm` satisfied `["npm"]`. Allow-list matching is strict now.
+- **Manifest approvals were a stub** that was never persisted or consulted, and
+  once implemented were keyed by an unresolved path, so a relative `--cwd` made one
+  approval transferable to any repository. Approvals are now stored, keyed by the
+  realpath plus a content digest, and `--yes` deliberately cannot waive them.
+- **`cause` was enumerable**, so `console.error(error)` printed raw `bws` stderr.
+- **`assertNoValueFields` crashed on a cyclic object** and missed non-enumerable
+  and getter-defined fields.
+- **The MCP server wrote no audit at all**, and its `readOnly` mode still minted
+  vault-write links. Both fixed; it now shares the CLI's audit file.
+- **The one-time link was returned in the MCP tool result** — a two-minute write
+  capability sitting in the model's context. It now goes to the human out of band,
+  which is what `docs/mcp.md` always said.
+- **`/health/ready` was unauthenticated and spawned two `bws` processes per
+  request.** Cached and rate limited.
+- **SQLite and its WAL/SHM sidecars were world-readable.**
+
+**Documentation was corrected in the same pass**, because a threat model that
+oversells is a defect: the argv write window, the Keychain write window, the
+plaintext credential store on non-macOS, the fact that Bitwarden grants are
+per-project so environment isolation is policy-engine-only, and the residual risk
+of `--pass-through-output` are all now in §5 rather than absent or filed as open
+questions.
+
+**What is deliberately not done.** No real Bitwarden credential has been used —
+everything runs against a fake `bws` executable, so the adapter is proven against
+a model of the real thing and not the real thing. `bws` is not installed on this
+machine. Nothing has been published to npm. The repository has had no external
+security review.
+
+**Decided along the way.** The npm name `agent-secrets` was already taken, so the
+CLI publishes as `@bx-labs/agent-secrets` with the binary still called
+`agent-secrets`. `run` does not forward the child's exit code by default, because
+an agent branching on exit 4 must be able to read it as "policy denied";
+`--propagate-exit-code` is there for shell and CI callers.
+
+
 ### 2026-08-16 — Bootstrap
 
 Created the repository from nothing.

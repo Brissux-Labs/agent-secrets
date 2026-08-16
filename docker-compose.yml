@@ -22,7 +22,10 @@ services:
       NODE_ENV: production
       AGENT_SECRETS_PUBLIC_URL: ${AGENT_SECRETS_PUBLIC_URL:?set this to your https origin}
       AGENT_SECRETS_ADAPTER_TOKEN: ${AGENT_SECRETS_ADAPTER_TOKEN:?generate one with: openssl rand -base64 48}
-      AGENT_SECRETS_TRUST_PROXY: "true"
+      # Only "true" when a reverse proxy you control sets X-Forwarded-For and
+      # strips any the client sent. Behind anything else — or exposed directly —
+      # a client can spoof its own IP and every per-IP rate limit stops working.
+      AGENT_SECRETS_TRUST_PROXY: "${AGENT_SECRETS_TRUST_PROXY:-false}"
       BWS_ACCESS_TOKEN: ${BWS_ACCESS_TOKEN:?the machine account token for the API}
       BWS_PROJECT_ID: ${BWS_PROJECT_ID:?the Bitwarden project UUID}
     volumes:

@@ -283,3 +283,39 @@ commands:
 
 Development gets everything; production gets the minimum; the test command cannot run
 in production at all. This is the shape most projects should end up with.
+
+
+## Approval, and why it is not a formality
+
+A manifest arrives with a repository. Running one of its commands means handing
+your credentials to something that repository chose, so a command is untrusted
+until a human has looked at it.
+
+A command needs approval when either is true:
+
+- it declares `approval: required`;
+- its environment is `production` — regardless of what the manifest says about
+  itself, because a manifest that could waive its own production gate would not
+  be a gate.
+
+The first time such a command runs, `agent-secrets` shows you the exact command
+line, the scope, and how many secrets it would inject, and asks. Your answer is
+stored in `manifest-approvals.json` under the CLI's config directory (mode
+`0600`) — never in the project, because an approvals file a repository could
+ship would approve itself.
+
+The approval is keyed by the SHA-256 digest of the manifest file. Editing the
+manifest — adding a secret to a command, changing what it executes, changing its
+environment — produces a different digest, so the stored approval stops matching
+and you are asked again. An approval is consent to a specific command as it was
+written, not standing consent to a file.
+
+**`--yes` does not waive it.** That flag skips the production *execution*
+confirmation for a scope you named yourself on the command line; it has no
+effect on manifest approval. The caller this gate exists for is the
+non-interactive one — a script, or an AI agent — and a flag that caller controls
+would not be a control at all. A non-interactive run of an unapproved command
+exits `4` and tells you to run it once in a terminal.
+
+To withdraw approvals, delete `manifest-approvals.json`, or remove the entries
+for one manifest path.

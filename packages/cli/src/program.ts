@@ -174,7 +174,17 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     .option('-m, --manifest <command>', 'run a command defined in agent-secrets.yaml')
     .option('--dry-run', 'report which names would be injected and run nothing', false)
     .option('--isolated-env', 'give the child a minimal environment instead of inheriting', false)
+    .option(
+      '--pass-through-output',
+      'give the child this terminal directly — needed for interactive commands, but turns off output redaction',
+      false,
+    )
     .option('-y, --yes', 'skip the production confirmation prompt', false)
+    .option(
+      '--propagate-exit-code',
+      "exit with the child's status instead of 9 — convenient for CI, ambiguous for agents",
+      false,
+    )
     .option('--cwd <path>', 'working directory for the child process')
     // Everything after `--` belongs to the child, including its own flags.
     .argument('[command...]', 'the command to run, after --')

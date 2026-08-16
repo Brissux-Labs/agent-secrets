@@ -107,23 +107,67 @@ export const jsonEnvelopeSchema = <T extends z.ZodType>(data: T) =>
  * field is a defect that must be fixed at the source.
  */
 export function assertNoValueFields(payload: unknown, path = '$'): void {
+  // A visited set and a depth cap, because this walker runs on structures
+  // parsed from `bws` output and from MCP tool arguments. Without them,
+  // `obj.self = obj` — or a deeply nested payload — turns a defensive check
+  // into a remotely triggerable RangeError, which is a worse outcome than the
+  // thing it was guarding against.
+  walk(payload, path, new WeakSet<object>(), 0);
+}
+
+/**
+ * Depth cap for the walk.
+ *
+ * Real metadata is five or six levels deep at most; 512 is far beyond anything
+ * legitimate while staying well under the engine's own stack limit, so a
+ * pathological payload produces a domain error rather than a RangeError.
+ */
+const MAX_WALK_DEPTH = 512;
+
+function walk(payload: unknown, path: string, seen: WeakSet<object>, depth: number): void {
   if (payload === null || typeof payload !== 'object') {
     return;
   }
+  if (depth > MAX_WALK_DEPTH) {
+    throw new Error(
+      `Refusing to serialize: payload nests deeper than ${MAX_WALK_DEPTH} levels at ${path}.`,
+    );
+  }
+  if (seen.has(payload)) {
+    // Already inspected on this walk. A cycle proves nothing new about which
+    // fields are present.
+    return;
+  }
+  seen.add(payload);
+
   if (Array.isArray(payload)) {
     for (const [index, item] of payload.entries()) {
-      assertNoValueFields(item, `${path}[${index}]`);
+      walk(item, `${path}[${index}]`, seen, depth + 1);
     }
     return;
   }
-  for (const [key, child] of Object.entries(payload)) {
-    const lowered = key.toLowerCase();
-    if (FORBIDDEN_METADATA_FIELDS_LOWERCASE.has(lowered)) {
+
+  // `Reflect.ownKeys` rather than `Object.entries`: a non-enumerable `value`
+  // property, or one defined with a getter, is invisible to `Object.entries`
+  // but visible to `util.inspect({ showHidden })` and to most serializers that
+  // are not `JSON.stringify`. The guard should not depend on which serializer
+  // happens to be downstream.
+  for (const key of Reflect.ownKeys(payload)) {
+    if (typeof key !== 'string') {
+      continue;
+    }
+    if (FORBIDDEN_METADATA_FIELDS_LOWERCASE.has(key.toLowerCase())) {
       throw new Error(
         `Refusing to serialize: forbidden field "${key}" at ${path}. ` +
           'Value-derived data must not cross a public result schema.',
       );
     }
-    assertNoValueFields(child, `${path}.${key}`);
+
+    // Read through the descriptor so a getter is never invoked: calling an
+    // unknown getter while validating untrusted data is its own hazard.
+    const descriptor = Object.getOwnPropertyDescriptor(payload, key);
+    if (descriptor && 'value' in descriptor) {
+      walk(descriptor.value, `${path}.${key}`, seen, depth + 1);
+    }
   }
 }
