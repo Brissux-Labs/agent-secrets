@@ -33,27 +33,41 @@ export const bwsProjectSchema = z
 
 export type BwsProject = z.infer<typeof bwsProjectSchema>;
 
-/** A secret as listed: `bws secret list` omits the value in recent versions. */
-export const bwsSecretListItemSchema = z
-  .object({
-    id: z.uuid(),
-    organizationId: z.uuid(),
-    projectId: z.uuid().nullable().optional(),
-    key: z.string(),
-    note: z.string().nullable().optional(),
-    creationDate: isoish.optional(),
-    revisionDate: isoish.optional(),
-  })
-  .loose();
+/**
+ * A secret as listed.
+ *
+ * `bws secret list` **includes the value** — that is what its `-o env` output
+ * format is built on, and it is true of every version we have tested, 2.1.0
+ * included. Not declaring `value` here is therefore only half of the guarantee:
+ * this schema is in Zod's default *strip* mode rather than `.loose()`, so an
+ * undeclared key is dropped at the parse boundary instead of riding along on
+ * the objects the adapter caches in its lookup index.
+ *
+ * Strip also keeps the forward compatibility `.loose()` was chosen for: a field
+ * a future `bws` adds is ignored, not rejected. The difference is only whether
+ * we keep a copy of it, and for a field that may be a credential the answer is
+ * no. `bws secret get` is the one path allowed to receive a value, and it wraps
+ * it in a `SecretValue` in the same expression that parses it.
+ */
+export const bwsSecretListItemSchema = z.object({
+  id: z.uuid(),
+  organizationId: z.uuid(),
+  projectId: z.uuid().nullable().optional(),
+  key: z.string(),
+  note: z.string().nullable().optional(),
+  creationDate: isoish.optional(),
+  revisionDate: isoish.optional(),
+});
 
 export type BwsSecretListItem = z.infer<typeof bwsSecretListItemSchema>;
 
 /**
  * A secret as returned by `secret get`, `secret create`, `secret edit`.
  *
- * Note `.loose()` rather than `.strict()`: a `bws` release that adds a field
- * must not break the adapter. Unknown fields are parsed and then dropped by the
- * mapper, so nothing unexpected propagates.
+ * The only shape that declares a value, and the only one entitled to. It
+ * inherits strip mode from the schema above, so an unknown field is tolerated
+ * without being retained: a `bws` release that adds a field must not break the
+ * adapter, and must not smuggle anything into it either.
  */
 export const bwsSecretSchema = bwsSecretListItemSchema.extend({
   value: z.string(),

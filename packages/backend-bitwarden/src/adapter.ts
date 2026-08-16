@@ -14,6 +14,7 @@ import {
 } from '@bx-labs/agent-secrets-core';
 import { BwsClient, type BwsClientOptions } from './bws-client.js';
 import { type BwsSecretListItem, parseNote, serializeNote } from './bws-schemas.js';
+import { failureReasonOf } from './failure-reason.js';
 
 /**
  * Bitwarden Secrets Manager backend.
@@ -73,6 +74,10 @@ export class BitwardenBackend implements SecretBackend {
         canWrite: false,
         latencyMs: Date.now() - startedAt,
         errorCode: errorCodeOf(error),
+        // Without this, "bws is not on the search path", "the token was
+        // refused", "the endpoint is wrong" and "the response did not parse"
+        // are one indistinguishable failure to every caller.
+        reason: failureReasonOf(error),
       };
     }
   }

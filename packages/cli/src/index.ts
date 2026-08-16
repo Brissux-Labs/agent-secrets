@@ -1,4 +1,5 @@
 export { disabledAuditSink, JsonlAuditSink } from './audit-sink.js';
+export { enrolmentFailure } from './commands/enrolment.js';
 export type { Config, Paths, PermissionReport } from './config.js';
 export {
   checkPermissions,
@@ -7,6 +8,7 @@ export {
   deleteConfig,
   loadConfig,
   newDeviceConfig,
+  resolveBwsExecutable,
   resolvePaths,
   saveConfig,
 } from './config.js';

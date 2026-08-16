@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { BackendUnavailableError, InternalError } from '@bx-labs/agent-secrets-core';
 import type { RedactionScope } from '@bx-labs/agent-secrets-redaction';
 import { redactText, truncate } from '@bx-labs/agent-secrets-redaction';
+import { tagFailureReason } from './failure-reason.js';
 
 /**
  * The only way this codebase starts a program.
@@ -126,19 +127,28 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
           if (nodeError.code === 'ENOENT') {
             reject(
-              new BackendUnavailableError(`Executable not found: ${file}`, {
-                hint: `Install it and make sure it is on PATH, or set the executable path explicitly.`,
-                cause: error,
-              }),
+              tagFailureReason(
+                new BackendUnavailableError(`Executable not found: ${file}`, {
+                  // A bare name is resolved against SAFE_PATH, not the caller's
+                  // PATH, so `which bws` succeeding proves nothing here. The
+                  // hint names the two ways to point at a binary elsewhere.
+                  hint: `Install it under one of ${SAFE_PATH}, or set AGENT_SECRETS_BWS_PATH (or --executable-path) to its absolute path.`,
+                  cause: error,
+                }),
+                'executable-not-found',
+              ),
             );
             return;
           }
 
           if (nodeError.killed || timedOut || nodeError.signal === 'SIGKILL') {
             reject(
-              new BackendUnavailableError(
-                `Command timed out after ${timeoutMs}ms and was terminated.`,
-                { hint: 'Raise the timeout or check backend reachability.', cause: error },
+              tagFailureReason(
+                new BackendUnavailableError(
+                  `Command timed out after ${timeoutMs}ms and was terminated.`,
+                  { hint: 'Raise the timeout or check backend reachability.', cause: error },
+                ),
+                'timeout',
               ),
             );
             return;
@@ -158,11 +168,14 @@ export async function run(options: RunOptions): Promise<RunResult> {
           }
 
           reject(
-            new BackendUnavailableError('Command failed to run.', {
-              // The original error is preserved for local debugging but never
-              // rendered: its message can embed the token or the value.
-              cause: error,
-            }),
+            tagFailureReason(
+              new BackendUnavailableError('Command failed to run.', {
+                // The original error is preserved for local debugging but never
+                // rendered: its message can embed the token or the value.
+                cause: error,
+              }),
+              'unreachable',
+            ),
           );
           return;
         }

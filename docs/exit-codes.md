@@ -124,7 +124,8 @@ to route around is exhibiting the behaviour this product exists to contain.
 
 **Emitted when:** `describe`, `rotate` or `delete` targets a secret that does not
 exist; `run` names a secret that does not exist in scope; `logout` targets an
-explicitly named project with no entry.
+explicitly named project with no entry; `init` is given a project the backend does
+not have, or one this machine account cannot see.
 
 Not emitted for an empty `list` (that is 0), and not for an unenrolled device (that
 is 3).
@@ -162,6 +163,13 @@ the subprocess exceeds its timeout or output cap.
 
 Note the third case: **unparsable output is treated as unavailability**, not as a
 parsing curiosity. We fail closed rather than guess at a malformed response.
+
+`init` emits this too, and it is the code to expect when `bws` is installed somewhere
+the tool does not look — see [`DOC.md` §2.2](../DOC.md), "Locating `bws`". It is
+deliberately **not** 3: a missing binary is not a rejected credential, and reporting
+one as the other sends the operator to check the only input they cannot inspect
+safely. `agent-secrets doctor` and `node scripts/preflight.mjs --json` both name this
+case explicitly rather than leaving it to be inferred.
 
 **What a script should do:** this is the one code worth retrying. Exponential backoff,
 a small number of attempts, then escalate. In CI, fail the job — do not fall back to

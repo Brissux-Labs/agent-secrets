@@ -116,8 +116,14 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   )
     .option('--device-name <name>', 'how this machine appears in audit records')
     .option('--project-id <uuid>', 'Bitwarden project ID')
-    .option('--server-url <url>', 'self-hosted Bitwarden API base URL')
-    .option('--executable-path <path>', 'absolute path to the bws binary')
+    .option(
+      '--server-url <url>',
+      'Bitwarden base URL — required off the US cloud, e.g. https://vault.bitwarden.eu for the EU',
+    )
+    .option(
+      '--executable-path <path>',
+      'absolute path to the bws binary, when it is not in a system directory',
+    )
     .option('--force', 're-enrol a device that is already enrolled', false)
     .action(handle((context, opts) => runInit(context, opts)));
 

@@ -124,6 +124,38 @@ record(
     : 'The Bitwarden Secrets Manager CLI is not installed. It is only needed to talk to a real vault; `pnpm demo` runs without it.',
 );
 
+/**
+ * Mirrors SAFE_PATH in packages/backend-bitwarden/src/subprocess.ts.
+ *
+ * The adapter resolves a bare `bws` against this fixed list rather than the
+ * caller's PATH, so that a poisoned PATH entry cannot substitute a program that
+ * captures the access token. The consequence is the one this check exists for:
+ * `command -v bws` can succeed on an install the tool will never find — a
+ * `~/.local/bin` install, for instance — and the failure it produces at
+ * enrolment time looks nothing like "the binary is somewhere else".
+ */
+const SAFE_PATH_DIRS = [
+  '/usr/local/bin',
+  '/opt/homebrew/bin',
+  '/usr/bin',
+  '/bin',
+  '/usr/sbin',
+  '/sbin',
+];
+const bwsPinned = (process.env.AGENT_SECRETS_BWS_PATH ?? '').trim().length > 0;
+const bwsReachable =
+  bwsPath === null ||
+  bwsPinned ||
+  SAFE_PATH_DIRS.includes(bwsPath.slice(0, bwsPath.lastIndexOf('/')));
+record(
+  'bws-reachable',
+  bwsReachable,
+  bwsPinned ? 'AGENT_SECRETS_BWS_PATH is set' : (bwsPath ?? null),
+  bwsReachable
+    ? null
+    : `bws is on your PATH but outside the directories Agent Secrets searches (${SAFE_PATH_DIRS.join(', ')}). Set AGENT_SECRETS_BWS_PATH=${bwsPath} or pass --executable-path to init.`,
+);
+
 // ── enrolment ──────────────────────────────────────────────────────────────
 const configHome =
   process.env.AGENT_SECRETS_HOME ??
@@ -200,6 +232,15 @@ function nextAction() {
           ? 'brew install bitwarden/tap/bws'
           : 'See the release page for your platform.',
       url: 'https://github.com/bitwarden/sdk-sm/releases?q=bws',
+    };
+  }
+  if (!bwsReachable) {
+    return {
+      id: 'point-at-bws',
+      actor: 'agent',
+      summary: `bws is installed at ${bwsPath}, which is not one of the directories Agent Secrets searches. Export AGENT_SECRETS_BWS_PATH so enrolment can find it, or pass --executable-path to init.`,
+      command: `export AGENT_SECRETS_BWS_PATH=${bwsPath}`,
+      url: null,
     };
   }
   if (!enrolled) {

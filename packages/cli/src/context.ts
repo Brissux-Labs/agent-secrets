@@ -11,7 +11,13 @@ import {
 import { RedactionScope } from '@bx-labs/agent-secrets-redaction';
 import { parse as parseYaml } from 'yaml';
 import { disabledAuditSink, JsonlAuditSink } from './audit-sink.js';
-import { type Config, loadConfig, type Paths, resolvePaths } from './config.js';
+import {
+  type Config,
+  loadConfig,
+  type Paths,
+  resolveBwsExecutable,
+  resolvePaths,
+} from './config.js';
 import {
   type CredentialStore,
   defaultCredentialStore,
@@ -114,13 +120,22 @@ export async function createContext(options: CreateContextOptions): Promise<Cont
         return backend;
       }
 
+      // The enrolled path wins over the environment, not the other way round.
+      // `config.json` is 0600 and was written by a deliberate `init`; an
+      // environment variable is ambient and inherited. Letting the ambient one
+      // override a pinned path would mean anything that can set a variable in
+      // this shell chooses which binary receives the access token — the exact
+      // substitution SAFE_PATH exists to prevent. The variable still applies
+      // when no path was pinned, which is the case this fixes.
+      const executablePath = resolveBwsExecutable(env, resolved.bitwarden.executablePath);
+
       backend = new BitwardenBackend({
         accessToken: token,
         projectId: resolved.bitwarden.projectId,
         redactionScope: redaction,
-        ...(resolved.bitwarden.executablePath === undefined
-          ? {}
-          : { executable: resolved.bitwarden.executablePath }),
+        // The environment variable wins over the enrolled path: a binary that
+        // moved is a thing the operator fixes without re-enrolling.
+        ...(executablePath === undefined ? {} : { executable: executablePath }),
         ...(resolved.bitwarden.serverUrl === undefined
           ? {}
           : { serverUrl: resolved.bitwarden.serverUrl }),

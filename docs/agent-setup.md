@@ -112,7 +112,24 @@ brew install bitwarden/tap/bws
 # https://github.com/bitwarden/sdk-sm/releases?q=bws
 ```
 
-Verify: `bws --version`.
+Verify: `bws --version`. Tested against `bws` 1.x and 2.1.0.
+
+**`which bws` is not enough.** Agent Secrets resolves a bare `bws` against a fixed
+list of directories — `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `/bin`,
+`/usr/sbin`, `/sbin` — and never against your `PATH`, so that a poisoned `PATH`
+entry cannot substitute a program that captures the access token. A binary
+installed anywhere else (a `~/.local/bin` install, an unpacked release tarball)
+is invisible to the tool while every shell check says it is fine.
+
+Re-run `node scripts/preflight.mjs --json`: the `bws-reachable` check covers
+exactly this, and its `nextAction` gives the export to run. Otherwise:
+
+```bash
+export AGENT_SECRETS_BWS_PATH=/absolute/path/to/bws
+```
+
+Put that in the human's shell profile, or hand them `--executable-path` in
+step 4 — a value on the command line is fine here, it is a path, not a secret.
 
 ---
 
@@ -141,6 +158,18 @@ agent-secrets init
 
 It asks for a device name, the project UUID, and then the access token on a
 hidden prompt. The token goes into the macOS Keychain and never into a file.
+
+Two flags to add for them when they apply — you can supply both, neither is a
+secret:
+
+```bash
+# Bitwarden EU cloud (or any self-hosted deployment). Without it, bws talks to
+# the US cloud and a perfectly valid EU token is refused.
+--server-url https://vault.bitwarden.eu
+
+# Only when bws is not in one of the directories listed in step 3.
+--executable-path /absolute/path/to/bws
+```
 
 Then wait for them to tell you it is done.
 
@@ -275,6 +304,10 @@ Be accurate about what they now have, including the limits:
 |---|---|---|
 | exit 3 on every command | not enrolled, or the Keychain entry was removed | `agent-secrets init` |
 | exit 7 | `bws` missing, or the token was revoked | `agent-secrets doctor`, check the machine account |
+| `init` says "The bws executable was not found" | `bws` is installed outside the directories in step 3 — the usual case is `~/.local/bin` | `export AGENT_SECRETS_BWS_PATH=$(which bws)`, then re-run `init` |
+| `init` says "The backend rejected this access token" | the token was truncated when pasted, or has been revoked | copy it again from the machine account; do **not** paste it into a chat to check it |
+| `init` says "The backend could not be reached" | wrong region — an EU account probed against the US cloud | re-run with `--server-url https://vault.bitwarden.eu` |
+| `init` says "that project is not visible to it" | wrong project UUID, or the machine account has no grant on it | check the UUID in the project's URL, and the machine account's project access |
 | exit 4 on a write | production, or an action absent from the policy | intended — ask the human before changing policy |
 | exit 5 on `run` | a named secret does not exist in that scope | `agent-secrets list` to see what does |
 | `init` cannot read the token | not a real terminal | run it in a terminal; this cannot be worked around |
