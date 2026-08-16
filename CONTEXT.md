@@ -4,28 +4,36 @@ Living state of the Agent Secrets repository. Whoever picks this up next — hum
 agent — should be able to read this file and know exactly where the work stopped,
 what was left unfinished on purpose, and what is simply missing.
 
-Append a dated entry to the intervention timeline at the end of every session. Do not
-rewrite history in this file; correct it with a later entry.
+Append a dated entry to the intervention timeline at the end of every session. The
+timeline is history: do not rewrite an entry, correct it with a later one.
+
+Everything *above* the timeline is state, not history. Correct it in place, in the
+same pass, the moment your work makes it wrong. This file spent a day claiming that
+one package of eight existed while the whole product was implemented and passing 500
+tests, because every session dutifully appended an entry and nobody touched the table.
 
 ---
 
 ## Where things stand
 
-**Overall: pre-release. One package of eight is implemented.**
+**Overall: pre-release, feature-complete for V1, and now proven against a real vault
+on one machine.** Not published to npm, not externally reviewed.
 
 | Area                          | State                                                        |
 | ----------------------------- | ------------------------------------------------------------ |
 | Monorepo skeleton             | Complete. Workspace, catalog, tsconfig references, Biome, Vitest projects. |
-| `@bx-labs/agent-secrets-core` | **Implemented and compiling.** Untested — see the gaps below. |
-| `@bx-labs/agent-secrets-redaction` | Empty `src/`. Not started.                             |
-| `@bx-labs/agent-secrets-test-helpers` | Empty `src/`. Not started.                          |
-| `@bx-labs/agent-secrets-backend-bitwarden` | Partial: subprocess helper, `bws` schemas and client wrapper are being written. No `index.ts`, no `SecretBackend` implementation, no tests. |
-| `@bx-labs/agent-secrets` (CLI) | Empty `src/`. Not started.                                  |
-| `@bx-labs/agent-secrets-mcp`  | Empty `src/`. Not started.                                   |
-| `apps/api`                    | Empty `src/`. Not started.                                   |
-| `apps/telegram`               | Empty `src/`. Not started.                                   |
-| Public documentation          | Complete as a design contract; describes far more than exists. |
-| CI                            | `.github/workflows/` exists and is empty.                    |
+| `@bx-labs/agent-secrets-core` | Implemented, 7 test files.                                    |
+| `@bx-labs/agent-secrets-redaction` | Implemented, 5 test files.                              |
+| `@bx-labs/agent-secrets-test-helpers` | Implemented: fake `bws`, fake Keychain, canary generator, temp-HOME fixtures. |
+| `@bx-labs/agent-secrets-backend-bitwarden` | Implemented. Tested against the fake `bws`, and exercised against real `bws` 2.1.0 and the Bitwarden EU cloud on 2026-08-16. |
+| `@bx-labs/agent-secrets` (CLI) | Implemented: `init`/`doctor`/`logout`/`add`/`list`/`describe`/`rotate`/`delete`/`run`. |
+| `@bx-labs/agent-secrets-mcp`  | Implemented. Seven tools, none returning a value.             |
+| `apps/api`                    | Implemented. **One integration suite — the thinnest coverage in the tree, on the component that handles a value in transit.** Never run against a real vault. |
+| `apps/telegram`               | Implemented. One integration suite. Never run against a real bot. |
+| Public documentation          | Complete, and now corrected where it had drifted from the code. |
+| CI                            | `.github/workflows/ci.yml` and `release.yml`. CI runs lint, typecheck, build, unit, integration, the secret scan and the raw-getter guard, and is green on `main`. Dependabot is active. |
+
+**540 tests across 25 files.** `pnpm verify` is green.
 
 The core package is the frozen contract everything else builds against. Its public
 API is exported from `packages/core/src/index.ts`; treat that export list as the
@@ -54,36 +62,31 @@ These are decisions, not oversights. Do not "fix" them without a human saying so
 
 ## Known gaps — the honest list
 
-Ordered by how much they should worry you.
+Ordered by how much they should worry you. **Rewritten 2026-08-16**: every item on
+the previous list had been closed by the V1 implementation without this section being
+corrected, so it described a repository that had not existed for a day. If you close
+one of these, edit it here in the same pass — a stale gap list is worse than none,
+because it is the first thing the next reader trusts.
 
-1. **The domain core has no unit tests.** `packages/core/test/unit/` contains a build
-   probe and nothing else. Every security property in `secret-value.ts`, `policy.ts`,
-   `metadata.ts` and `value-rules.ts` is currently asserted by reading the source.
-   Per `CLAUDE.md` §4, security behaviour without a test does not exist. This is the
-   single highest-priority item in the repository.
-2. **`pnpm scan:secrets` is broken.** `package.json` points it at
-   `scripts/scan-secrets.mjs`, which does not exist. `pnpm verify` therefore fails at
-   its last step, which means the "run the gates before committing" rule cannot
-   currently be satisfied in full. Either write the script or stop claiming the gate.
-3. **No canary harness.** The whole leak-detection strategy described in `CLAUDE.md`
-   §4.3 depends on `@bx-labs/agent-secrets-test-helpers`, which is empty.
-4. **No CI.** Nothing enforces the gates on a pull request.
-5. **The `bws` value-passing mechanism is unresolved.** The backend adapter must
-   deliver a value to the Bitwarden CLI. If that CLI only accepts the value as a
-   command-line argument, the value is briefly visible in the process table on that
-   machine. Whoever finishes `packages/backend-bitwarden` must determine what `bws`
-   actually supports, pick the least-exposing option available, and write the result
-   into `docs/threat-model.md` as either a mitigation or a residual risk. **Do not
-   let this ship undocumented.**
-6. **`security@bxlabs.ai` and `conduct@bxlabs.ai` are not confirmed to exist.** They
-   are published in `SECURITY.md` and `CODE_OF_CONDUCT.md`. A disclosure address that
-   bounces is worse than no address. Blocking for going public.
-7. **The exit semantics of `agent-secrets run` are a documented decision, not yet a
-   tested one.** `DOC.md` and `docs/exit-codes.md` state that the CLI exits 9 when the
-   child fails rather than forwarding the child's own status. Implement it that way or
-   change both documents; do not let code and docs diverge.
-8. **No `.github` templates.** The issue template that tells reporters not to paste
-   credentials does not exist yet, and that is exactly the template that matters.
+1. **No external security review.** Nobody who did not write this code has looked at
+   it, and the threat model has not been reviewed by anyone who did not write it.
+   `SECURITY.md` says so; it remains true, and it is the reason not to put a
+   production credential behind this yet. Roadmap G3.
+2. **`apps/api` and `apps/telegram` have one test suite each.** They are the thinnest
+   coverage in the tree and they are the components where a value transits a process
+   and a network. Neither has ever run against a real vault or a real bot.
+3. **Nothing is published.** No npm release, no signed tag, no documented signing key,
+   and `release.yml` has never run a real release. Roadmap G4–G6.
+4. **`ROADMAP.md` understates the tree.** Its boxes were captured just after the
+   bootstrap and were never re-ticked when V1 shipped. Treat the table above as
+   authoritative until that file gets a verification pass.
+5. **The history scan was targeted, not exhaustive.** On 2026-08-16 the full commit
+   history was grepped for credential shapes and came back clean — only obvious
+   placeholders. That is not the same as running a dedicated tool over every blob.
+   Roadmap G2.
+6. **One machine is enrolled, on one backend, in one region.** Real-vault behaviour
+   is proven for macOS + `bws` 2.1.0 + the Bitwarden EU cloud, and for nothing else.
+   The multi-device revocation story (C10) has not been exercised with real tokens.
 
 ## Conventions worth knowing before you touch anything
 
@@ -114,6 +117,34 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-08-16 — The disclosure address exists, and the state sections were a year behind
+
+`security@bxlabs.ai` was created. `bxlabs.ai` carries a Google Workspace MX record, so
+the domain receives mail; the mailbox itself is the maintainer's word plus that
+record, which is as far as verification goes without sending someone a test message.
+`SECURITY.md` needed no change — it was simply true now. Roadmap G1 is ticked, with
+the ordering violation recorded rather than tidied away: the repository went public
+*before* the box that existed to prevent exactly that.
+
+`conduct@bxlabs.ai` turned out to be a phantom. No published document references it —
+`CODE_OF_CONDUCT.md` routes reports to `security@bxlabs.ai` — so G1 was asking for a
+mailbox nothing pointed at. Requirement dropped rather than satisfied.
+
+**The larger finding.** Checking that one gap exposed that the whole "Where things
+stand" table and the entire "Known gaps" list had been false since the V1 commit:
+they described a repository with one implemented package, no CI, no canary harness, a
+broken `pnpm scan:secrets` and no issue templates. In reality every package ships, CI
+runs the full gate set on every push and is green, and there are 540 tests. Every
+session had followed `CLAUDE.md` §4.6 to the letter — append a dated entry — and the
+letter only ever covered the timeline. Both sections are now rewritten, and §4.6 says
+to correct state in the same pass, because the top of this file is what the next
+reader trusts.
+
+A targeted grep of the full commit history for credential shapes came back clean:
+only obvious placeholders. G2 is marked partial — a pattern grep is not a dedicated
+scanner over every blob, and saying otherwise would be the kind of overclaim this
+file exists to prevent.
 
 ### 2026-08-16 — Handing the human a command instead of a shrug
 

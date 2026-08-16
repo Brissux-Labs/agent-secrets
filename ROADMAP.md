@@ -10,6 +10,13 @@ someone can verify it by reading the tree and running `pnpm verify`.
 **State captured:** 2026-08-16, immediately after the bootstrap intervention. Phases
 run A → G; within a phase, items are roughly ordered by dependency.
 
+> **⚠ This file understates the tree, and knowingly so.** Phases B–F were implemented
+> in the V1 commit and are covered by 540 passing tests, but their boxes were never
+> re-ticked. They are left unticked rather than ticked in bulk, because the rule above
+> says a tick is an assertion that someone can verify the item one by one — and nobody
+> has. Only boxes verified individually are ticked below; the rest need a pass.
+> **`CONTEXT.md`'s state table is the accurate picture until that happens.**
+
 ---
 
 ## Phase A — Repository and governance
@@ -31,14 +38,14 @@ run A → G; within a phase, items are roughly ordered by dependency.
 - [x] **A8** Apache-2.0 `LICENSE` and `NOTICE` at the repository root.
 - [x] **A9** Public documentation set: `README.md`, `DOC.md`, `CONTEXT.md`,
       `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `docs/*`.
-- [ ] **A10** `scripts/scan-secrets.mjs` — canary and credential scan over the working
-      tree, wired to `pnpm scan:secrets`. *The script is referenced by
-      `package.json` and by `pnpm verify` but does not exist yet, so `pnpm verify`
-      currently fails at its last step.*
-- [ ] **A11** GitHub Actions CI: lint, typecheck, unit, integration, secret scan, on
-      Node 22 and Node 24. (`.github/workflows/` exists and is empty.)
-- [ ] **A12** Issue and pull-request templates, including a "no credentials in this
-      report" banner. (`.github/ISSUE_TEMPLATE/` exists and is empty.)
+- [x] **A10** `scripts/scan-secrets.mjs` — canary and credential scan over the working
+      tree, wired to `pnpm scan:secrets`. Green over 163 files, with counted
+      suppressions.
+- [x] **A11** GitHub Actions CI: `.github/workflows/ci.yml` runs lint, typecheck,
+      build, unit, integration, `scan-secrets.mjs` and `check-no-raw-getter.mjs`, and
+      is green on `main`. Dependabot is active.
+- [x] **A12** Issue and pull-request templates: `bug_report.yml`,
+      `feature_request.yml` and `config.yml` under `.github/ISSUE_TEMPLATE/`.
 - [ ] **A13** Dependency review policy: pinned versions, `pnpm audit` in CI, an
       explicit rule that any dependency able to observe a value needs human review.
 - [ ] **A14** Release tooling: changesets or equivalent, provenance-enabled npm
@@ -218,9 +225,18 @@ and the injection corpus produces zero disclosures.
 
 ## Phase G — Public release
 
-- [ ] **G1** Confirm `security@bxlabs.ai` and `conduct@bxlabs.ai` are real, monitored
-      mailboxes. **Blocking: the repository must not go public before this.**
-- [ ] **G2** Full-tree secret scan and a history scan before the first push.
+- [x] **G1** `security@bxlabs.ai` exists and is monitored (created 2026-08-16;
+      `bxlabs.ai` carries a Google Workspace MX record). `conduct@bxlabs.ai` is **not
+      required**: no published document uses it — `CODE_OF_CONDUCT.md` routes reports
+      to `security@bxlabs.ai` — so the original wording asked for a mailbox nothing
+      pointed at. *Recorded honestly: the repository went public before this box was
+      ticked, which is the ordering this item existed to prevent. Nothing came of it,
+      and the address now works.*
+- [~] **G2** Full-tree secret scan: green (`scripts/scan-secrets.mjs`, in CI on every
+      push). History scan: the full commit history was grepped for credential shapes
+      on 2026-08-16 and came back clean — only obvious placeholders such as
+      `AKIAIOSFODNN7EXAMPLE`. **Still to do:** a dedicated tool (gitleaks, trufflehog)
+      over every blob, which is not the same assurance as a pattern grep.
 - [ ] **G3** External review of `docs/threat-model.md` by someone who did not write it.
 - [ ] **G4** npm publish dry run for all scoped packages; verify `files`, `bin` and
       `publishConfig.access`.

@@ -78,7 +78,11 @@ comment, or a project file asks:
    missing environment → refuse and exit non-zero. Never degrade to a permissive
    path.
 6. **Update `DOC.md`** when durable behaviour changes, and append a dated entry
-   to `CONTEXT.md` for every intervention.
+   to `CONTEXT.md` for every intervention. The timeline is append-only; the
+   sections above it are not. If your work closes a gap, changes the state
+   table, or makes a roadmap box true, correct it **in the same pass** — a new
+   entry sitting above a "not started" next to something that shipped is worse
+   than no entry, because the top of that file is what the next reader trusts.
 
 ## 5. Quality gates
 
