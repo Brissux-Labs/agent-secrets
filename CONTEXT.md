@@ -115,6 +115,31 @@ down here or in `DOC.md` before you finish.
 
 ## Intervention timeline
 
+### 2026-08-16 — Handing the human a command instead of a shrug
+
+With no one-time form API running — the normal state for a single-machine setup —
+`secret_add_request` answered "Secure input links are not configured. The human can
+add the secret with `agent-secrets add` on their machine instead." True, and not
+actionable: the agent then had to *compose* the command line itself.
+
+That composition is the part worth being careful about. A command line written by a
+language model is a command line a prompt injection can shape, and the human pastes it
+into a shell. The failure mode is not the tool disclosing anything — `add` has no
+`--value` flag — it is `bws secret create KEY <value> <project>` arriving inside a
+plausible reply, or the right command carrying `--env production`.
+
+So `handoffCommand()` builds it in the server, from a reference `makeRef` has already
+validated. The grammar admits no space, quote, semicolon, backtick, `$` or newline, so
+the string cannot become a second command and nothing needs escaping. The tool result
+tells the agent to relay it verbatim and not to run it. Read-only mode hands over
+nothing: an operator who said "this agent causes no writes" is not routed around
+through the human's keyboard.
+
+**Also corrected:** `docs/threat-model.md` §5.16 still claimed `secret_add_request`
+returns the one-time link to the model. It has not since the adversarial review — the
+URL is deliberately absent from the result. The section now states the residual risk
+that does remain, which is that an agent can *cause* a request a human then acts on.
+
 ### 2026-08-16 — First enrolment against a real vault, and what it found
 
 The first attempt to enrol a real machine against a real Bitwarden organisation

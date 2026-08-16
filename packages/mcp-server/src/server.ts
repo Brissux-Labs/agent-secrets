@@ -12,6 +12,7 @@ import {
   nullAuditSink,
   type PolicyEngine,
   type SecretBackend,
+  type SecretRef,
 } from '@bx-labs/agent-secrets-core';
 import { truncate } from '@bx-labs/agent-secrets-redaction';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -338,8 +339,17 @@ async function issueLink(
 ): Promise<ToolResult> {
   if (!options.linkIssuer) {
     return fail(
-      'Secure input links are not configured on this server. ' +
-        'The human can add the secret with `agent-secrets add` on their machine instead.',
+      [
+        'Secure input links are not configured on this server, so there is no link to send.',
+        '',
+        'Give the human this command, exactly as written, to run in a terminal on the',
+        'enrolled machine. It asks for the value at a hidden prompt, twice:',
+        '',
+        `    ${handoffCommand(action, ref)}`,
+        '',
+        'Do not rewrite it, do not run it yourself, and do not ask them for the value —',
+        'you will never see it. Confirm afterwards with secret_describe.',
+      ].join('\n'),
     );
   }
   try {
@@ -371,6 +381,31 @@ async function issueLink(
       isAgentSecretsError(error) ? error.message : 'The secure link service is not reachable.',
     );
   }
+}
+
+/**
+ * The command a human runs to supply a value themselves.
+ *
+ * It exists as a function, rather than as a sentence the model writes, because
+ * of what happens to the string next: a human pastes it into a shell. A command
+ * line composed by a language model is a command line that a prompt injection
+ * can shape — into `production` instead of `development`, into a lookalike
+ * binary, or into `bws secret create KEY <value>`, which would put the value in
+ * argv and in shell history. That is the same class of attack as §4.7 of the
+ * threat model, arriving through the human's fingers instead of the agent's.
+ *
+ * Built here, every component has already been through `makeRef`, so the
+ * reference grammar guarantees the result contains no whitespace, quote,
+ * semicolon, backtick, `$` or newline. Nothing is escaped because nothing can
+ * need escaping — and the tool result tells the agent to relay it verbatim.
+ *
+ * There is no variant of this that carries a value. `add` and `rotate` have no
+ * `--value` flag, which is why handing over a command discloses nothing that
+ * the agent did not already supply as arguments.
+ */
+export function handoffCommand(action: 'create' | 'rotate', ref: SecretRef): string {
+  const verb = action === 'create' ? 'add' : 'rotate';
+  return `agent-secrets ${verb} ${ref.name} --project ${ref.project} --env ${ref.environment}`;
 }
 
 /**

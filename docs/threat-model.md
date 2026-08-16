@@ -383,13 +383,22 @@ Read this section twice. It is the most useful part of the document.
     `run` pipes the child's stdout and stderr through a redaction transform. Some
     commands need a real terminal, and that flag gives them one — at the cost of the
     filter. The CLI warns on every run that uses it.
-16. **The MCP `secret_add_request` tool returns the link to the model.** The link is a
-    two-minute, single-use write capability for one named reference. Handing it to an
-    agent is what makes "ask the human to fill this in" work at all, but it means the
-    link exists in the model's context and its provider's logs. A prompt-injected
-    agent can therefore mint a link and ask a human to open it. It cannot read the
-    value that human enters. Set `AGENT_SECRETS_MCP_READ_ONLY=1` to disable link
-    minting entirely.
+16. **An agent can put a request in front of a human, and the human is the last check
+    on it.** `secret_add_request` does *not* return the one-time link — the URL is
+    kept out of the tool result and delivered out of band, so it never enters the
+    model's context or its provider's logs. What the agent still has is the ability to
+    *cause* a request: to mint a link a human is then asked to open, or — when no link
+    service is configured — to hand the human the `agent-secrets add …` command to run
+    themselves. A prompt-injected agent can therefore ask for a secret nobody wanted,
+    or for the wrong reference.
+
+    What bounds it: neither path can read the value the human enters; the handed-over
+    command is assembled by the server from components the reference grammar has
+    already validated, rather than composed by the model, so it cannot become a
+    different command; there is no `--value` flag for it to carry one; and policy is
+    re-evaluated when the human runs it, so a production create is still denied. What
+    does *not* bound it: a human who types a value into a prompt they were talked into
+    opening. `AGENT_SECRETS_MCP_READ_ONLY=1` disables both paths.
 17. **Pre-release software, no external review.** The core is covered by tests and the
     quality gates are green, but no third party has reviewed this. Do not put a
     production credential behind it yet.

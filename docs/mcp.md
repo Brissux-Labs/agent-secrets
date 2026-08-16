@@ -162,6 +162,36 @@ The agent's correct behaviour after this call is to **tell the human to check th
 messages and then wait**. Polling `secret_describe` until the record appears is
 acceptable; anything that tries to obtain the link is not.
 
+**When no link service is configured.** Running the one-time form API is optional, and
+most single-machine setups do not. The tool then returns an error result carrying the
+exact command for the human to run instead:
+
+```
+Secure input links are not configured on this server, so there is no link to send.
+
+Give the human this command, exactly as written, to run in a terminal on the
+enrolled machine. It asks for the value at a hidden prompt, twice:
+
+    agent-secrets add OPENAI_API_KEY --project ezjob --env development
+
+Do not rewrite it, do not run it yourself, and do not ask them for the value —
+you will never see it. Confirm afterwards with secret_describe.
+```
+
+The command is assembled **by the server**, from a reference the grammar has already
+validated, and relayed verbatim. That is the point: the human is about to paste it
+into a shell, and a command line composed by a language model is a command line a
+prompt injection can shape — into the wrong environment, into a lookalike binary, or
+into `bws secret create KEY <value>`, which would put the value in argv and in shell
+history. Assembled here it cannot contain a space, a quote, a semicolon, a backtick or
+a newline, because the grammar rejects all of them, and it has no flag that could
+carry a value. See §5.16 of the [threat model](threat-model.md) for what this does and
+does not bound.
+
+In `AGENT_SECRETS_MCP_READ_ONLY=1` mode no command is handed over either. Read-only
+means the operator has said this agent causes no writes, and routing around that
+through the human's keyboard would defeat the setting.
+
 ---
 
 ### `secret_rotate_request`
