@@ -48,6 +48,14 @@ export interface BackendHealth {
   readonly backendVersion?: string;
   /** Stable code when unhealthy. Never a raw backend message. */
   readonly errorCode?: string;
+  /**
+   * Which failure it was, from the adapter's closed vocabulary — a missing
+   * binary, a refused credential, an unreachable endpoint, an unparseable
+   * response. `errorCode` decides the exit status; this decides what the
+   * operator is told to do next. Like `errorCode`, it is a constant chosen from
+   * the shape of the failure and never text taken from the backend.
+   */
+  readonly reason?: string;
 }
 
 export interface ResolvedSecret {

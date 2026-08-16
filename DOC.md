@@ -76,25 +76,79 @@ All commands are **planned**.
 There is deliberately **no** `--yes-to-everything`, **no** `--force` on a production
 mutation, and **no** flag that prints a value.
 
-### 2.2 `agent-secrets init` — planned
+### 2.2 `agent-secrets init`
 
 Enrol this machine.
 
 ```bash
-agent-secrets init --project <slug> [--device-name <label>] [--force]
+agent-secrets init [--device-name <label>] [--project-id <uuid>] \
+  [--server-url <url>] [--executable-path <path>] [--force]
 ```
 
 - Prompts for a Bitwarden Secrets Manager access token on a **hidden TTY**. The token
   is never accepted as an argument, from stdin in a pipe, or from an environment
-  variable — all three are visible somewhere.
+  variable — all three are visible somewhere. Anything not supplied as a flag is asked
+  for interactively; `init` therefore refuses to run under `--json`.
+- `--server-url` is the Bitwarden base URL. It is required for any deployment that is
+  not the US cloud, **including the EU cloud**: `--server-url https://vault.bitwarden.eu`.
+  `bws` derives `<base>/identity` and `<base>/api` from it.
+- `--executable-path` is the absolute path to `bws`. See "Locating `bws`" below —
+  this is the flag that matters when the binary is not in a system directory.
 - Generates a device id and writes the Keychain entry (see
   [`docs/device-enrollment.md`](docs/device-enrollment.md)).
 - Creates the config directory at `0700` and `config.json` at `0600`.
-- `--force` replaces an existing Keychain entry for the same device/project pair.
+- `--force` replaces an existing enrolment.
+- The backend is probed **before** anything is written, so a failed enrolment leaves no
+  config file and no credential behind.
 - Audit: `init`.
 
-**Exit:** 0 on success; 2 on a malformed project slug; 3 if the token is rejected by
-the backend; 6 if an entry already exists and `--force` was not given.
+**Exit:** 0 on success; 2 on malformed input or a non-interactive session; 3 if the
+backend refused the access token or the machine account lacks permission; 5 if the
+backend has no such project, or the token cannot see the project it was given; 6 if
+this device is already enrolled and `--force` was not given; 7 if `bws` could not be
+found, the backend was unreachable, or it answered in a shape this version does not
+understand.
+
+Each of those exits carries its own message. They used to be one sentence — "the
+backend rejected this token, or is unreachable" — which named the one input the
+operator cannot check without pasting a credential somewhere it must never go.
+
+#### Locating `bws`
+
+A bare `bws` is resolved against a **fixed list of directories**, not against your
+`PATH`:
+
+```
+/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+This is deliberate — a poisoned `PATH` entry is a cheap way to substitute a program
+that captures the access token — and it has a consequence worth stating plainly: an
+install in `~/.local/bin`, `~/bin`, or a release tarball unpacked anywhere else is
+invisible to this tool even though `which bws` reports success. Point at it explicitly:
+
+```bash
+export AGENT_SECRETS_BWS_PATH=/absolute/path/to/bws   # persistent
+agent-secrets init --executable-path /absolute/path/to/bws   # this enrolment only
+```
+
+Resolution order:
+
+1. `--executable-path`, at `init` only;
+2. the path recorded at enrolment in `config.json`;
+3. `AGENT_SECRETS_BWS_PATH`;
+4. a bare `bws` against the fixed list above.
+
+Note that 2 beats 3, not the other way round. A path pinned at enrolment is a
+reviewed decision in a `0600` file; an environment variable is ambient and inherited
+by every process, and letting it redirect the binary that receives the access token
+would reopen the substitution the fixed list exists to prevent. If a pinned path
+stops being correct — the binary moved — re-run `init --force`, which is a
+deliberate act that leaves an audit record.
+
+The path chosen at `init` is persisted, so later commands spawn that exact binary
+instead of repeating a search. `node scripts/preflight.mjs` and `agent-secrets doctor`
+both report this case specifically.
 
 ### 2.3 `agent-secrets doctor` — planned
 
@@ -110,7 +164,13 @@ Checks, in order:
 2. `bws` binary present, executable, and its version.
 3. Keychain entry present for this device and project.
 4. Backend reachability and whether the credential can read and write
-   (`SecretBackend.health()`).
+   (`SecretBackend.health()`). When the probe fails, the report carries both the
+   stable `errorCode` and a `reason` from a closed vocabulary —
+   `executable-not-found`, `unauthenticated`, `permission-denied`, `not-found`,
+   `unreachable`, `timeout`, `rate-limited`, `incompatible-response`, `unknown` —
+   so that a caller can tell "the binary is missing" from "the token was refused".
+   Like `errorCode`, `reason` is chosen from the *shape* of the failure; no backend
+   text ever reaches it.
 5. Config directory and file permissions (`0700` / `0600`); a group- or
    world-readable config is reported as a failure, not a warning.
 6. Policy file parses, or the built-in default is in force.
@@ -477,7 +537,7 @@ See [`docs/device-enrollment.md`](docs/device-enrollment.md).
 | `AGENT_SECRETS_CONFIG_DIR`  | Overrides the config directory.                                     |
 | `AGENT_SECRETS_PROJECT`     | Default for `--project`.                                            |
 | `AGENT_SECRETS_BACKEND`     | Default for `--backend`. Only `bitwarden` is valid in V1.           |
-| `AGENT_SECRETS_BWS_PATH`    | Absolute path to the `bws` binary when it is not on `PATH`.         |
+| `AGENT_SECRETS_BWS_PATH`    | Absolute path to the `bws` binary. Needed whenever it is not in one of the directories listed in §2.2, which includes every `~/.local/bin`-style install. Overridden by `--executable-path`; overrides the path recorded at enrolment. |
 | `AGENT_SECRETS_API_URL`     | Base URL of your one-time form API, e.g. `https://secrets.example.invalid`. |
 | `NO_COLOR`                  | Standard. Disables styling.                                         |
 

@@ -1,9 +1,13 @@
-import { BitwardenBackend, BwsClient } from '@bx-labs/agent-secrets-backend-bitwarden';
+import { BitwardenBackend, BwsClient, SAFE_PATH } from '@bx-labs/agent-secrets-backend-bitwarden';
 import {
+  type AgentSecretsError,
   AuthRequiredError,
+  type BackendHealth,
+  BackendUnavailableError,
   buildAuditEvent,
   formatScope,
   InvalidInputError,
+  NotFoundError,
 } from '@bx-labs/agent-secrets-core';
 import { confirm, input, password } from '@inquirer/prompts';
 import {
@@ -11,6 +15,7 @@ import {
   defaultDeviceName,
   deleteConfig,
   newDeviceConfig,
+  resolveBwsExecutable,
   saveConfig,
 } from '../config.js';
 import type { Context } from '../context.js';
@@ -68,11 +73,15 @@ export async function runInit(context: Context, options: InitOptions): Promise<n
     throw new InvalidInputError('No access token was entered.', { field: 'accessToken' });
   }
 
+  // Resolved once and persisted, so every later command spawns the same binary
+  // by absolute path instead of repeating a search that already failed once.
+  const executablePath = resolveBwsExecutable(context.env, options.executablePath);
+
   const config = newDeviceConfig({
     deviceName,
     projectId,
     ...(options.serverUrl === undefined ? {} : { serverUrl: options.serverUrl }),
-    ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
+    ...(executablePath === undefined ? {} : { executablePath }),
   });
 
   context.redaction.trackString(accessToken);
@@ -86,17 +95,15 @@ export async function runInit(context: Context, options: InitOptions): Promise<n
     client: new BwsClient({
       accessToken,
       projectId: config.bitwarden?.projectId ?? projectId,
-      ...(options.executablePath === undefined ? {} : { executable: options.executablePath }),
+      ...(executablePath === undefined ? {} : { executable: executablePath }),
       ...(options.serverUrl === undefined ? {} : { serverUrl: options.serverUrl }),
       redactionScope: context.redaction,
     }),
   });
 
-  const health = await probe.health();
-  if (!health.reachable) {
-    throw new AuthRequiredError('The backend rejected this token, or is unreachable.', {
-      hint: 'Check the token and the project ID. Nothing was saved.',
-    });
+  const failure = enrolmentFailure(await probe.health());
+  if (failure) {
+    throw failure;
   }
 
   await saveConfig(context.paths, config);
@@ -137,6 +144,74 @@ export async function runInit(context: Context, options: InitOptions): Promise<n
   return 0;
 }
 
+/**
+ * Turn a failed enrolment probe into the one thing the operator should do next.
+ *
+ * This used to be a single sentence — "The backend rejected this token, or is
+ * unreachable" — for four unrelated causes, and it exited 3 for all of them.
+ * The one it named is the one an operator cannot verify without pasting a
+ * credential somewhere it should never go, so it sent people looking in the
+ * wrong place. Each branch below returns a constant message and the exit code
+ * `docs/exit-codes.md` assigns to that condition.
+ *
+ * Nothing here is derived from backend output. The adapter's `reason` is a
+ * closed vocabulary; `bws` text never reaches this function.
+ */
+export function enrolmentFailure(health: BackendHealth): AgentSecretsError | null {
+  const nothingSaved = 'Nothing was saved.';
+
+  if (!health.reachable) {
+    switch (health.reason) {
+      case 'executable-not-found':
+        return new BackendUnavailableError('The bws executable was not found.', {
+          hint: `Agent Secrets resolves bws against a fixed list of directories, not your PATH, so \`which bws\` can succeed while this fails. Point at it with AGENT_SECRETS_BWS_PATH=/absolute/path/to/bws or --executable-path. ${nothingSaved}`,
+        });
+      case 'unauthenticated':
+        return new AuthRequiredError('The backend rejected this access token.', {
+          hint: `Check that the machine account token was pasted whole and has not been revoked. ${nothingSaved}`,
+        });
+      case 'permission-denied':
+        return new AuthRequiredError(
+          'The backend accepted this token but the machine account lacks permission on that project.',
+          {
+            hint: `Grant the machine account read/write permission on the project in Bitwarden, and save the configuration there. ${nothingSaved}`,
+          },
+        );
+      case 'not-found':
+        return new NotFoundError('The backend has no project with that ID.', {
+          hint: `Check the project UUID, and that this machine account is granted access to that project. ${nothingSaved}`,
+        });
+      case 'incompatible-response':
+        return new BackendUnavailableError(
+          'The backend answered in a format this version does not understand.',
+          {
+            hint: `Check the installed bws version with \`bws --version\`. ${nothingSaved}`,
+          },
+        );
+      case 'timeout':
+      case 'rate-limited':
+      case 'unreachable':
+        return new BackendUnavailableError('The backend could not be reached.', {
+          hint: `Check connectivity and the region: the EU cloud needs --server-url https://vault.bitwarden.eu. ${nothingSaved}`,
+        });
+      default:
+        return new BackendUnavailableError('The backend probe failed without a usable reason.', {
+          hint: `Run \`agent-secrets doctor\` after enrolling, or re-run with a reachable backend. ${nothingSaved}`,
+        });
+    }
+  }
+
+  if (!health.canRead) {
+    // The token authenticated, so this is the other half of the same question:
+    // the machine account cannot see the project it was pointed at.
+    return new NotFoundError('The token works, but that project is not visible to it.', {
+      hint: `Check the project UUID, and that the machine account is granted access to that project in Bitwarden. ${nothingSaved}`,
+    });
+  }
+
+  return null;
+}
+
 export async function runDoctor(context: Context): Promise<number> {
   const { writer } = context;
   const config = context.config;
@@ -166,6 +241,7 @@ export async function runDoctor(context: Context): Promise<number> {
       canWrite: health.canWrite,
       latencyMs: health.latencyMs,
       ...(health.errorCode === undefined ? {} : { errorCode: health.errorCode }),
+      ...(health.reason === undefined ? {} : { reason: health.reason }),
     };
     if (!health.reachable) {
       exitCode = 7;
@@ -208,8 +284,17 @@ export async function runDoctor(context: Context): Promise<number> {
       lines.push(
         backendReport['reachable']
           ? `${fmt.success('✓')} Backend reachable (${String(backendReport['latencyMs'])} ms)`
-          : `${fmt.error('✗')} Backend unreachable (${String(backendReport['errorCode'] ?? 'unknown')})`,
+          : `${fmt.error('✗')} Backend unreachable (${String(backendReport['errorCode'] ?? 'unknown')}: ${String(backendReport['reason'] ?? 'unknown')})`,
       );
+
+      if (backendReport['reason'] === 'executable-not-found') {
+        // The check most likely to be misread: `which bws` succeeds, so the
+        // operator concludes the binary is fine and goes looking at the token.
+        lines.push(
+          `  ${fmt.dim('bws is resolved against')} ${SAFE_PATH}`,
+          `  ${fmt.dim('next:')} export AGENT_SECRETS_BWS_PATH=/absolute/path/to/bws`,
+        );
+      }
 
       if (backendReport['reachable']) {
         lines.push(

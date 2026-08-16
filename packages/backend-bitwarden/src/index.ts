@@ -10,6 +10,8 @@ export {
   parseNote,
   serializeNote,
 } from './bws-schemas.js';
+export type { BackendFailureReason } from './failure-reason.js';
+export { failureReasonOf, tagFailureReason } from './failure-reason.js';
 export type { RunOptions, RunResult } from './subprocess.js';
 export {
   DEFAULT_MAX_OUTPUT_BYTES,

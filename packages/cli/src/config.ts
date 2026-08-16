@@ -169,6 +169,34 @@ export function newDeviceConfig(input: {
   });
 }
 
+/**
+ * Where the `bws` binary is, when it is not somewhere the adapter looks.
+ *
+ * The adapter resolves a bare `bws` against its own fixed list of directories
+ * rather than the caller's `PATH`, so that a poisoned PATH entry cannot
+ * substitute a program that captures the access token. The cost is that a
+ * perfectly ordinary install — `~/.local/bin`, `~/bin`, a release tarball
+ * unpacked into a project — is invisible to this tool while `which bws` reports
+ * success. `AGENT_SECRETS_BWS_PATH` is the documented way out
+ * (DOC.md §8.1); `--executable-path` is the same thing for one invocation.
+ *
+ * Both are explicit acts by the operator, which is what separates them from
+ * silently trusting `PATH`.
+ *
+ * `explicit` wins: at enrolment it is `--executable-path`, and afterwards it is
+ * the path `init` recorded in `config.json`. A pinned path is a reviewed
+ * decision in a 0600 file; the environment variable is ambient and inherited,
+ * so it fills a gap rather than overriding a choice.
+ */
+export function resolveBwsExecutable(
+  env: NodeJS.ProcessEnv = process.env,
+  explicit?: string,
+): string | undefined {
+  const candidate = explicit?.trim() || env['AGENT_SECRETS_BWS_PATH'];
+  const trimmed = candidate?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
 export function defaultDeviceName(): string {
   // `hostname()` on macOS returns things like "Antoine-Mac-mini.local"; the
   // suffix is noise in an audit record.

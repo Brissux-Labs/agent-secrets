@@ -115,6 +115,81 @@ down here or in `DOC.md` before you finish.
 
 ## Intervention timeline
 
+### 2026-08-16 — First enrolment against a real vault, and what it found
+
+The first attempt to enrol a real machine against a real Bitwarden organisation
+(EU cloud, `bws` 2.1.0 installed in `~/.local/bin`) failed at the backend probe with:
+
+```
+The backend rejected this token, or is unreachable.
+Check the token and the project ID. Nothing was saved.
+```
+
+The token and the project ID were both correct. **`bws` was never executed.**
+
+**Root cause.** `minimalEnv()` gives the child a fixed `SAFE_PATH`
+(`/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`), and `BwsClient`
+defaults its executable to the bare name `bws`. `execFile` resolves a bare name
+against the *child's* `PATH`, so an install in `~/.local/bin` is invisible: `ENOENT`,
+mapped to `BackendUnavailableError`, flattened by `health()` into
+`{ reachable: false }`, and reported by `init` with a sentence naming the token. The
+adapter had only ever run against the fake `bws`, which every test addresses by
+absolute path — so no test exercised name resolution, and `scripts/preflight.mjs`
+reported `bws` as present because it uses the caller's `PATH`.
+
+Not causes, and each checked rather than assumed: the `bws` 2.1.0 argument syntax and
+ordering (`project list`, `secret list <uuid>`, trailing `--output json`) all parse;
+its JSON is camelCase and matches `bws-schemas.ts`; and `BWS_SERVER_URL=https://vault.bitwarden.eu`
+is right for the EU cloud — `<base>/api/alive` and `<base>/identity/.well-known/openid-configuration`
+both answer 200. The `--value-stdin` transport does **not** exist in 2.1.0, so writes
+fall back to argv exactly as §5.13 of the threat model already describes.
+
+**Fixed.**
+
+- `BackendHealth` gained `reason`: a closed vocabulary
+  (`executable-not-found`, `unauthenticated`, `permission-denied`, `not-found`,
+  `unreachable`, `timeout`, `rate-limited`, `incompatible-response`, `unknown`)
+  tagged onto errors through a non-enumerable symbol so it cannot reach a sink by
+  accident, and derived from the *shape* of a failure — never from `bws` text.
+- `init` maps each reason to its own message and to the exit code
+  `docs/exit-codes.md` assigns it. It used to exit 3 for a missing binary.
+- A token `bws` refuses to *parse* — truncated paste, wrong number of parts, bad
+  base64 — is now `AUTH_REQUIRED` rather than `INTERNAL`. None of those messages
+  contain the words the old classifier looked for, and "file a bug" was the wrong
+  advice for "paste it again".
+- `AGENT_SECRETS_BWS_PATH` is now implemented. DOC.md §8.1 had documented it since
+  the bootstrap; nothing read it.
+- `scripts/preflight.mjs` gained `bws-reachable`, which is the check that would have
+  turned this session into thirty seconds.
+
+**Found while checking the 2.1.0 response shapes, and fixed in the same pass.**
+`bws secret list` returns the **value** of every secret — that is what makes its
+`-o env` output format possible — and `bwsSecretListItemSchema` was `.loose()`.
+Passthrough keeps undeclared keys, so every value in the project stayed attached to
+the objects `#loadIndex` caches for the lifetime of the command, as plain strings
+outside `SecretValue`. Nothing printed them (`toMetadata` builds an explicit object)
+and no test could have caught it, because the assertion everyone writes is about
+output. The schema is now in Zod's default strip mode: still forward-compatible with
+a field a future `bws` adds, no longer keeping a copy of it. The comment above it
+claimed the opposite of the truth — "`bws secret list` omits the value in recent
+versions" — which is how it survived review.
+
+**One precedence decision worth not reversing.** `AGENT_SECRETS_BWS_PATH` fills a
+gap; it does not override a path pinned at enrolment. `config.json` is `0600` and was
+written by a deliberate `init`, whereas an environment variable is ambient and
+inherited by every process — letting it choose the binary that receives the access
+token would reopen the substitution `SAFE_PATH` exists to prevent. There is a unit
+test pinning that order.
+
+**Deliberately not done.** `SAFE_PATH` was left alone. Adding `~/.local/bin` would
+put a user-writable directory into the list the tool trusts for the binary it hands
+the access token to; pointing at that binary explicitly is the operator's call to
+make, once, in the open.
+
+**Still true:** no real Bitwarden credential has been used by an agent in this
+repository, and none should be. The enrolment above is run by the human at a hidden
+prompt.
+
 ### 2026-08-16 — V1 implementation, then an adversarial review of it
 
 **What was built.** The whole V1 surface: the domain core, the redaction package,
