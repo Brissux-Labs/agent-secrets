@@ -1,0 +1,46 @@
+{
+  "name": "@bx-labs/agent-secrets-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Agent Secrets: metadata discovery and scoped execution, never raw values",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agent-secrets-mcp": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@bx-labs/agent-secrets": "workspace:*",
+    "@bx-labs/agent-secrets-backend-bitwarden": "workspace:*",
+    "@bx-labs/agent-secrets-core": "workspace:*",
+    "@bx-labs/agent-secrets-redaction": "workspace:*",
+    "@modelcontextprotocol/sdk": "catalog:",
+    "yaml": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@bx-labs/agent-secrets-test-helpers": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

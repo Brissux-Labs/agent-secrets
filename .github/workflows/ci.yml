@@ -1,0 +1,152 @@
+name: CI
+
+# Every third-party action is pinned to a full commit SHA. A tag is a mutable
+# pointer: whoever controls the action repository can move `v4` to new code and
+# it runs inside a job that has read access to this repository. The trailing
+# comment records which release the SHA corresponds to so upgrades stay legible.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege at the workflow level: nothing here writes to the repository,
+# publishes, or comments. Jobs that need more must say so explicitly.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never let a tool phone home from a build that handles a security product.
+  DO_NOT_TRACK: '1'
+
+jobs:
+  quality:
+    name: Quality gates (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Do not leave the job's token in .git/config. A later step, or a
+          # postinstall script, could otherwise read it out of the checkout.
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      # The two policy gates. They run after the tests because a failing test
+      # explains itself better, but they are not allowed to be skipped when the
+      # tests fail: `if: always()` keeps a leak visible even in a red build.
+      - name: Scan for credentials and canaries
+        if: always()
+        run: node scripts/scan-secrets.mjs
+
+      - name: Check for raw-value getters
+        if: always()
+        run: node scripts/check-no-raw-getter.mjs
+
+  macos:
+    name: Quality gates (macOS)
+    # macOS is the primary target and the Keychain adapter, the `security` binary
+    # invocation and the TTY prompt all behave differently here. A green Linux
+    # build says nothing about them.
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Scan for credentials and canaries
+        if: always()
+        run: node scripts/scan-secrets.mjs
+
+      - name: Check for raw-value getters
+        if: always()
+        run: node scripts/check-no-raw-getter.mjs
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      # Audits the lockfile directly: no install, so no lifecycle script from a
+      # dependency runs before we have decided the dependency is acceptable.
+      - name: Audit
+        run: pnpm audit --audit-level=high

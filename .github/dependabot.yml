@@ -1,0 +1,58 @@
+version: 2
+
+# Dependency updates arrive grouped and weekly, not continuously. A security
+# product's dependency surface is reviewed by a human (SECURITY.md), and a
+# steady drip of single-package pull requests is how that review turns into
+# rubber-stamping. One batch a week is a thing somebody actually reads.
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+    groups:
+      # Security fixes travel alone so they can be merged without waiting for the
+      # rest of the batch to be reviewed.
+      production-dependencies:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: [minor, patch]
+      development-dependencies:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [minor, patch]
+      security-updates:
+        applies-to: security-updates
+        patterns: ['*']
+    ignore:
+      # Majors are a deliberate migration, never an automated one: they change
+      # behaviour in packages that can observe a secret value.
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - ci
+    groups:
+      github-actions:
+        patterns: ['*']

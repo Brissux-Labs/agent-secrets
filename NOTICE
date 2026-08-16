@@ -1,0 +1,9 @@
+Agent Secrets
+Copyright 2026 Bx Labs
+
+This product includes software developed at Bx Labs (https://bxlabs.ai).
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the full text.
+
+Third-party dependencies retain their own licenses; they are listed in
+pnpm-workspace.yaml (the version catalog) and resolved in pnpm-lock.yaml.

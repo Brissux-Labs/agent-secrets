@@ -1,0 +1,72 @@
+# Reference deployment: the Agent Secrets API and Telegram adapter.
+#
+# This is a single-tenant deployment for one person or one small team. It is
+# deliberately not a production-grade multi-tenant topology, and the security
+# properties that matter are the ones you provide around it:
+#
+#   - TLS terminates in a reverse proxy in front of this (Caddy, nginx,
+#     Cloudflare Tunnel). The API refuses to start in production mode unless
+#     AGENT_SECRETS_PUBLIC_URL is https, but it does not terminate TLS itself.
+#   - The API binds inside the compose network only. Do not publish 8787 to the
+#     internet directly.
+#   - Nothing in this file contains a credential. Every value comes from a .env
+#     file that is gitignored, or from your orchestrator's secret store.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      AGENT_SECRETS_PUBLIC_URL: ${AGENT_SECRETS_PUBLIC_URL:?set this to your https origin}
+      AGENT_SECRETS_ADAPTER_TOKEN: ${AGENT_SECRETS_ADAPTER_TOKEN:?generate one with: openssl rand -base64 48}
+      AGENT_SECRETS_TRUST_PROXY: "true"
+      BWS_ACCESS_TOKEN: ${BWS_ACCESS_TOKEN:?the machine account token for the API}
+      BWS_PROJECT_ID: ${BWS_PROJECT_ID:?the Bitwarden project UUID}
+    volumes:
+      - api-data:/data
+    # The API writes only to /data. A read-only root filesystem turns a
+    # hypothetical write primitive into a dead end.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - internal
+    expose:
+      - "8787"
+
+  telegram:
+    build:
+      context: .
+      dockerfile: apps/telegram/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?the bot token from @BotFather}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:?comma-separated numeric Telegram user ids}
+      AGENT_SECRETS_API_URL: http://api:8787
+      AGENT_SECRETS_ADAPTER_TOKEN: ${AGENT_SECRETS_ADAPTER_TOKEN:?must match the API}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - internal
+
+volumes:
+  api-data:
+
+networks:
+  internal:
+    driver: bridge

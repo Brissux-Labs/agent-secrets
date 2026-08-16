@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/redaction" },
+    { "path": "./packages/test-helpers" },
+    { "path": "./packages/backend-bitwarden" },
+    { "path": "./packages/cli" },
+    { "path": "./packages/mcp-server" },
+    { "path": "./apps/api" },
+    { "path": "./apps/telegram" }
+  ]
+}

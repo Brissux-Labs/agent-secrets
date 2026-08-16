@@ -1,0 +1,27 @@
+{
+  "name": "@bx-labs/agent-secrets-telegram",
+  "version": "0.1.0",
+  "description": "Telegram adapter: metadata-only commands that hand back a one-time secure link",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node dist/bot.js"
+  },
+  "dependencies": {
+    "@bx-labs/agent-secrets-core": "workspace:*",
+    "@bx-labs/agent-secrets-redaction": "workspace:*",
+    "grammy": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@bx-labs/agent-secrets-test-helpers": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@bx-labs/agent-secrets-api",
+  "version": "0.1.0",
+  "description": "Single-tenant HTTPS API serving one-time secure input forms",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@bx-labs/agent-secrets-backend-bitwarden": "workspace:*",
+    "@bx-labs/agent-secrets-core": "workspace:*",
+    "@bx-labs/agent-secrets-redaction": "workspace:*",
+    "@fastify/cookie": "catalog:",
+    "@fastify/formbody": "catalog:",
+    "@fastify/helmet": "catalog:",
+    "@fastify/rate-limit": "catalog:",
+    "better-sqlite3": "catalog:",
+    "fastify": "catalog:",
+    "yaml": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@bx-labs/agent-secrets-test-helpers": "workspace:*",
+    "@types/better-sqlite3": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

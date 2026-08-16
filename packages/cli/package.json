@@ -1,0 +1,71 @@
+{
+  "name": "@bx-labs/agent-secrets",
+  "version": "0.1.0",
+  "description": "Open-source secret broker for AI agents: secure ingestion, scoped execution, no raw values in model context",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agent-secrets": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./runner": {
+      "types": "./dist/runner.d.ts",
+      "default": "./dist/runner.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    },
+    "./credential-store": {
+      "types": "./dist/credential-store.d.ts",
+      "default": "./dist/credential-store.js"
+    }
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "keywords": [
+    "secrets",
+    "vault",
+    "bitwarden",
+    "mcp",
+    "ai-agents",
+    "cli",
+    "security"
+  ],
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@bx-labs/agent-secrets-backend-bitwarden": "workspace:*",
+    "@bx-labs/agent-secrets-core": "workspace:*",
+    "@bx-labs/agent-secrets-redaction": "workspace:*",
+    "@inquirer/prompts": "catalog:",
+    "commander": "catalog:",
+    "yaml": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@bx-labs/agent-secrets-test-helpers": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,28 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+allowBuilds:
+  "@biomejs/biome": true
+  better-sqlite3: true
+
+# Single source of truth for third-party versions across every workspace package.
+# Referenced from package.json as "catalog:". Keeping versions here makes
+# dependency review (SECURITY.md) a one-file exercise.
+catalog:
+  "@fastify/cookie": 11.1.2
+  "@fastify/formbody": 9.0.0
+  "@fastify/helmet": 13.1.0
+  "@fastify/rate-limit": 11.2.0
+  "@inquirer/prompts": 8.5.2
+  "@modelcontextprotocol/sdk": 1.30.0
+  "@types/better-sqlite3": 9.6.0
+  "@types/node": 22.20.1
+  better-sqlite3: 13.0.3
+  commander: 15.0.0
+  fastify: 5.12.0
+  grammy: 1.45.1
+  typescript: 5.9.3
+  vitest: 4.1.10
+  yaml: 2.9.0
+  zod: 4.4.3

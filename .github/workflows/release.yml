@@ -1,0 +1,137 @@
+name: Release
+
+# Publication is a human decision, not an automated consequence of a merge.
+#
+# CLAUDE.md §8 lists "publishing a release" among the actions that require a
+# human. This workflow is therefore manually dispatched, defaults to a dry run,
+# and targets the `release` GitHub Environment — configure that environment with
+# required reviewers so that the publish step waits for an approval no agent and
+# no push can produce. An npm version cannot be unpublished after 72 hours;
+# treat the approval prompt as the last moment the decision is reversible.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: npm dist-tag to publish under
+        required: true
+        default: next
+        type: choice
+        options: [next, latest]
+      dry_run:
+        description: Run every gate and pack the tarballs, but do not publish
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  DO_NOT_TRACK: '1'
+
+jobs:
+  release:
+    name: Verify, pack and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A fork can dispatch its own copy of this workflow; it must never be able to
+    # publish under this project's name, even if it somehow holds a token.
+    if: github.repository == 'Brissux-Labs/agent-secrets'
+    environment: release
+    permissions:
+      contents: read
+      # Required for npm provenance: the OIDC token is what ties the published
+      # tarball to this workflow file at this commit. It grants no repository
+      # write access.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The full gate, not a subset. A release is the one build where "we will
+      # fix that in a follow-up" is not available.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Scan for credentials and canaries
+        run: node scripts/scan-secrets.mjs
+
+      - name: Check for raw-value getters
+        run: node scripts/check-no-raw-getter.mjs
+
+      - name: Release checklist
+        run: node scripts/verify-release.mjs
+
+      # Pack first, publish second, from the same tarballs. Checksums let a user
+      # compare what the registry serves against what this run produced.
+      - name: Pack tarballs
+        run: |
+          mkdir -p release-artifacts
+          pnpm -r --filter "./packages/*" exec pnpm pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts"
+
+      - name: Generate checksums
+        run: |
+          cd release-artifacts
+          sha256sum ./*.tgz | tee SHA256SUMS.txt
+
+      - name: Upload tarballs and checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-artifacts
+          path: release-artifacts/
+          retention-days: 14
+
+      - name: Publish to npm with provenance
+        if: ${{ inputs.dry_run == false }}
+        env:
+          # Repository secret, scoped to publishing only. It is never written to
+          # a file and never passed on a command line: npm reads it from the
+          # environment via the registry-url configured above.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: >
+          pnpm publish -r
+          --filter "./packages/*"
+          --access public
+          --provenance
+          --tag "${{ inputs.dist_tag }}"
+          --no-git-checks
+
+      - name: Dry run notice
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run: every gate passed and the tarballs were packed, but nothing was published."
+          echo "Re-dispatch with dry_run = false, and approve the 'release' environment, to publish."

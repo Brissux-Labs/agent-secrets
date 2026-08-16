@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a capability or a change in behaviour.
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing: some requests are out of scope by construction, not by
+        priority. Agent Secrets will not grow a way to read a raw value back out
+        (no `get_secret` tool, no `--show`, no value in JSON output), will not
+        add telemetry, and will not infer a `production` environment. Those are
+        the product, not gaps in it.
+
+        A request for one of them is still worth filing if you have a use case we
+        have not thought about — but say so explicitly, because the answer starts
+        at "no" and the reasoning has to be worth changing.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does it break down today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should happen instead. Include the command or tool shape if relevant.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: value-exposure
+    attributes:
+      label: Does this proposal involve a secret value?
+      options:
+        - label: This proposal does not require any raw value to be returned, printed, logged, or serialized.
+        - label: This proposal would require a raw value to reach somewhere new (explain below — it is not automatically refused, but it needs a threat-model argument).
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including workarounds you are using now.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface
+      multiple: true
+      options:
+        - CLI (agent-secrets)
+        - MCP server
+        - HTTP API / secure input form
+        - Telegram adapter
+        - Backends
+        - Policy
+        - Documentation
+    validations:
+      required: true

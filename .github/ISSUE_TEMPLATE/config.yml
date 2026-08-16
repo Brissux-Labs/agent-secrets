@@ -1,0 +1,21 @@
+# Blank issues are disabled on purpose: the bug template carries a warning about
+# pasting real credentials, and a blank issue is a text box with no warning on it.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Brissux-Labs/agent-secrets/security/policy
+    about: >-
+      Do not open a public issue for a vulnerability. Follow SECURITY.md and use
+      private disclosure. A public issue about a leak path is a public exploit.
+
+  - name: Something leaked a value
+    url: https://github.com/Brissux-Labs/agent-secrets/security/policy
+    about: >-
+      If a secret value reached a log, a tool result, or a model context, treat it
+      as a vulnerability and disclose it privately. Rotate the affected credential
+      first, before writing anything down.
+
+  - name: Question or usage help
+    url: https://github.com/Brissux-Labs/agent-secrets/discussions
+    about: Setup questions, backend configuration, and agent integration.

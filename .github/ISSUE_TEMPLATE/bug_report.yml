@@ -1,0 +1,100 @@
+name: Bug report
+description: Something in Agent Secrets behaves incorrectly.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Never paste a real secret into this issue
+
+        Issues are public and permanent. GitHub keeps edited content in its
+        history, so deleting a value after posting it does not remove it.
+
+        - Replace every value, token, and access key with `<redacted>`.
+        - Command output goes through `agent-secrets` redaction, but output from
+          *other* tools does not — read it before you paste it.
+        - **If you have already pasted a real credential anywhere: stop, rotate
+          it now, and only then continue.** Rotation is the fix; deleting the
+          comment is not.
+
+        A reference such as `bitwarden/my-project/development/OPENAI_API_KEY` is
+        safe to include: it names a secret, it is not one.
+
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confirmation
+      options:
+        - label: This report contains no real secret value, token, or access key.
+          required: true
+        - label: I have read SECURITY.md and this is a bug, not a vulnerability.
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, with values replaced by placeholders.
+      placeholder: |
+        1. agent-secrets create my-project/development/EXAMPLE_KEY
+        2. agent-secrets run --project my-project --env development -- npm start
+        3. ...
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: exit-code
+    attributes:
+      label: Exit code
+      description: The exit code of the failing command, if there was one (docs/exit-codes.md).
+      placeholder: '7'
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: >-
+        Redacted output or error message. Check it for credentials before
+        pasting; if in doubt, summarise instead of pasting.
+      render: text
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface
+      multiple: true
+      options:
+        - CLI (agent-secrets)
+        - MCP server
+        - HTTP API / secure input form
+        - Telegram adapter
+        - Bitwarden backend
+        - Documentation
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `agent-secrets --version`.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 15.3 (arm64), Node 22.11.0
+    validations:
+      required: true
