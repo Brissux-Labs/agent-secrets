@@ -244,12 +244,26 @@ Behaviour, in order:
 signal; the child's own status is reported in the JSON envelope as
 `data.childExitCode` and `data.signal`. It does *not* forward the child's exit code,
 because exit codes 2–10 belong to this tool: a caller must be able to tell "policy
-denied" from "the child happened to return 4". A `--propagate-exit-code` flag for
-callers who prefer passthrough is planned but not decided.
+denied" from "the child happened to return 4", and the caller most likely to get
+that wrong is an agent making a security decision.
+
+`--propagate-exit-code` restores forwarding, so `agent-secrets run -- pytest`
+exits exactly as `pytest` would. Use it in a shell or a CI step where you read the
+result yourself; do not use it where an agent branches on the code.
 
 Other exits: 2 on invalid input or an empty secret set; 4 on policy denial or a
 denied executable; 5 if a named secret does not exist; 7 if the backend is
 unreachable.
+
+**Output.** The child's stdout and stderr are piped through a redaction transform
+seeded with the values that were injected, so a child that prints its own
+environment prints `[REDACTED]`. The transform keeps an overlap buffer, so a value
+split across two writes is still caught.
+
+The cost is that a piped child has no TTY: it may disable colour, and it cannot
+drive an interactive prompt on stdout. `--pass-through-output` hands the child
+this terminal directly for the cases that need it — and turns the filter off for
+that run. The CLI warns every time it is used.
 
 ---
 
