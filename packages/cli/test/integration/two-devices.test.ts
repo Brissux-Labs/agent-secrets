@@ -36,7 +36,6 @@ describe('two devices sharing one vault', () => {
   let envB: Record<string, string>;
 
   const enrol = async (
-    home: TempHome,
     env: Record<string, string>,
     deviceName: string,
     token: string,
@@ -79,8 +78,8 @@ describe('two devices sharing one vault', () => {
     envA = { ...macMini.env, ...base };
     envB = { ...macBook.env, ...base };
 
-    await enrol(macMini, envA, 'Mac-mini', 'fake-token-mac-mini');
-    await enrol(macBook, envB, 'MacBook-Air', 'fake-token-macbook-air');
+    await enrol(envA, 'Mac-mini', 'fake-token-mac-mini');
+    await enrol(envB, 'MacBook-Air', 'fake-token-macbook-air');
   });
 
   afterEach(async () => {

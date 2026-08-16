@@ -72,7 +72,10 @@ describe('looksLikeValue', () => {
     ['an AWS-shaped access key id', 'AKIAIOSFODNN7EXAMPLE'],
     // Assembled at runtime for the same reason as in patterns.test.ts: the
     // literal form matches GitHub's Slack detector.
-    ['a Slack-shaped token', ['xoxb', '0'.repeat(12), '0'.repeat(12), 'abcdefghijklmnopqrstuvwx'].join('-')],
+    [
+      'a Slack-shaped token',
+      ['xoxb', '0'.repeat(12), '0'.repeat(12), 'abcdefghijklmnopqrstuvwx'].join('-'),
+    ],
   ])('flags %s', (_label, sample) => {
     expect(looksLikeValue(`/add_secret ezjob development KEY ${sample}`).suspicious).toBe(true);
   });
