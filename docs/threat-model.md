@@ -135,7 +135,7 @@ terminal transcript, or an agent conversation log.
 
 **Residual risk:** we authenticate a Telegram *account*. Someone who has taken over an
 allowlisted account is, to us, that user. This is why the one-time link is short-lived
-and single-use, and why production mutation is off by default.
+and single-use, and why production `rotate`, `delete` and `run` are off by default.
 
 ### 4.4 A replay attacker
 
@@ -396,9 +396,13 @@ Read this section twice. It is the most useful part of the document.
     command is assembled by the server from components the reference grammar has
     already validated, rather than composed by the model, so it cannot become a
     different command; there is no `--value` flag for it to carry one; and policy is
-    re-evaluated when the human runs it, so a production create is still denied. What
-    does *not* bound it: a human who types a value into a prompt they were talked into
-    opening. `AGENT_SECRETS_MCP_READ_ONLY=1` disables both paths.
+    re-evaluated when the human runs it, so a production rotation or deletion is still
+    denied. What does *not* bound it: a production *create*, which the default policy
+    permits — an injected agent can therefore talk a human into storing a credential
+    nobody asked for, though it adds a name rather than replacing one and the value
+    never reaches the agent. Nor does anything bound a human who types a value into a
+    prompt they were talked into opening. `AGENT_SECRETS_MCP_READ_ONLY=1` disables both
+    paths.
 17. **Pre-release software, no external review.** The core is covered by tests and the
     quality gates are green, but no third party has reviewed this. Do not put a
     production credential behind it yet.

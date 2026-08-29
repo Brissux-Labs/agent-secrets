@@ -158,7 +158,7 @@ Restrictive on purpose, and enforced in code rather than in a prompt:
 | ------------- | ------------------------------------------------------------- |
 | `development` | full lifecycle — list, describe, request, create, rotate, delete, run |
 | `preview`     | list, describe, run, and requests that need human approval     |
-| `production`  | **list and describe only** — mutation is off until you enable it explicitly in a policy file |
+| `production`  | list, describe, and **`create`** — adding a name that does not exist yet. `rotate`, `delete` and `run` stay off until you enable them explicitly in a policy file |
 
 ## Architecture
 

@@ -337,8 +337,9 @@ The serious one. A production key is known to someone it should not be.
    it is honoured. Until you do this, everything else is theatre.
 2. **Mint a replacement** at the provider.
 3. **Store the replacement**, using a flow you trust. Under the default policy,
-   production mutation is denied, so this needs either a policy file that explicitly
-   permits it or a temporary, deliberate, documented change:
+   `rotate` is denied in production — it replaces a value something is currently
+   using — so this needs either a policy file that explicitly permits it or a
+   temporary, deliberate, documented change:
 
    ```bash
    agent-secrets rotate --project ezjob --env production --name EXAMPLE_API_KEY
@@ -368,7 +369,7 @@ The serious one. A production key is known to someone it should not be.
 
 8. Tighten `allowExecutables` for production, so `run` cannot launch arbitrary
    binaries with a production credential.
-9. Confirm production mutation is denied again if you enabled it for the rotation.
+9. Confirm `rotate` is denied in production again if you enabled it for this.
 10. Write the incident up in [`CONTEXT.md`](../CONTEXT.md) — what leaked, how, and what
     changed as a result.
 

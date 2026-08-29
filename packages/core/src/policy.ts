@@ -99,10 +99,11 @@ export interface PolicyDecision {
  * The default policy when no `agent-secrets.policy.yaml` is present.
  *
  * Deliberately restrictive: development is fully usable, preview is read-only
- * plus execution, and production allows nothing at all. Per the PRD's own
- * recommendation (§31), production mutation stays disabled until after the
- * first public release; a user who wants it must write it down explicitly in a
- * policy file, which is exactly the kind of decision that should leave a trace.
+ * plus execution, and production allows metadata reads plus `create` — the one
+ * write that cannot overwrite, disclose or execute anything. Every mutation
+ * that touches an existing production credential (`rotate`, `delete`, `run`)
+ * stays disabled until a user writes it down explicitly in a policy file, which
+ * is exactly the kind of decision that should leave a trace.
  */
 export function defaultPolicy(): PolicyDocument {
   return policyDocumentSchema.parse({
@@ -134,7 +135,26 @@ const DEFAULT_ENVIRONMENT_RULES: Record<string, { allow: Action[]; humanApproval
     humanApproval: ['request-create', 'request-rotate'],
   },
   production: {
-    allow: ['list', 'describe'],
+    /**
+     * `create` is here and `rotate`, `delete` and `run` are not, and the line
+     * between them is what the action can reach:
+     *
+     *  * `create` can only add a name that does not exist yet — `runAdd`
+     *    refuses an existing one with `ConflictError` (FR-ADD-005), so it can
+     *    never overwrite a live credential. It discloses nothing and starts no
+     *    process. And the MCP toolset has no path to it at all: an agent can
+     *    only ever reach `request-create`, which produces a link a human fills
+     *    in. Denying it by default did not protect a value; it charged the
+     *    human at the keyboard a hand-written policy file for the product's
+     *    most ordinary act, which is how people end up keeping credentials
+     *    somewhere else instead.
+     *  * `rotate` replaces a value that something in production is currently
+     *    using, `delete` destroys one, and `run` injects them into a child
+     *    process. Each touches what already exists, so each stays closed until
+     *    a policy file says otherwise — a decision that then leaves a trace in
+     *    a reviewed commit.
+     */
+    allow: ['list', 'describe', 'create'],
     humanApproval: [],
   },
 };
@@ -156,11 +176,22 @@ export function parsePolicy(raw: unknown): PolicyDocument {
   return parsed.data;
 }
 
+export interface PolicyEngineOptions {
+  /**
+   * Absolute path of the policy file this document was read from, used only to
+   * make a denial actionable. Omitted when the caller has no file — the hint
+   * then stays generic rather than naming a path that may not exist.
+   */
+  readonly policyFile?: string;
+}
+
 export class PolicyEngine {
   readonly #document: PolicyDocument;
+  readonly #policyFile: string | undefined;
 
-  constructor(document: PolicyDocument = defaultPolicy()) {
+  constructor(document: PolicyDocument = defaultPolicy(), options: PolicyEngineOptions = {}) {
     this.#document = document;
+    this.#policyFile = options.policyFile;
   }
 
   evaluate(context: PolicyContext): PolicyDecision {
@@ -228,10 +259,27 @@ export class PolicyEngine {
         reference: `${context.target.project}/${context.target.environment}`,
         hint: decision.requiresHumanApproval
           ? 'Obtain approval through a channel the agent does not control, then retry.'
-          : 'Adjust agent-secrets.policy.yaml if this action should be permitted.',
+          : this.#adjustmentHint(context),
       });
     }
     return decision;
+  }
+
+  /**
+   * Say which key to add and in which file.
+   *
+   * The previous wording — "Adjust agent-secrets.policy.yaml" — named a
+   * relative path that nothing ever reads: `loadPolicy` opens only the file
+   * under the config home, deliberately, so that a cloned repository cannot
+   * grant itself production access. Someone following that hint edited a file
+   * in their project directory and saw the denial again, which reads as a bug
+   * in the tool rather than a policy decision they can change.
+   */
+  #adjustmentHint(context: PolicyContext): string {
+    const { project, environment } = context.target;
+    const key = `projects.${project}.environments.${environment}.allow`;
+    const where = this.#policyFile ?? 'your agent-secrets policy file';
+    return `Add "${context.action}" to ${key} in ${where} if this action should be permitted.`;
   }
 
   #checkExecutable(executable: string): PolicyDecision | null {

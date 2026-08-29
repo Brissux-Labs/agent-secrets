@@ -33,7 +33,7 @@ on one machine.** Not published to npm, not externally reviewed.
 | Public documentation          | Complete, and now corrected where it had drifted from the code. |
 | CI                            | `.github/workflows/ci.yml` and `release.yml`. CI runs lint, typecheck, build, unit, integration, the secret scan and the raw-getter guard, and is green on `main`. Dependabot is active. |
 
-**540 tests across 25 files.** `pnpm verify` is green.
+**565 tests across 26 files.** `pnpm verify` is green.
 
 The core package is the frozen contract everything else builds against. Its public
 API is exported from `packages/core/src/index.ts`; treat that export list as the
@@ -43,9 +43,12 @@ interface and do not widen it casually.
 
 These are decisions, not oversights. Do not "fix" them without a human saying so.
 
-- **Production mutation is off.** `defaultPolicy()` gives `production` exactly `list`
-  and `describe`. Enabling create/rotate/delete there requires an explicit
-  `agent-secrets.policy.yaml`. This stays off through V1.
+- **Destructive production mutation is off.** `defaultPolicy()` gives `production`
+  `list`, `describe` and `create`. Enabling `rotate`, `delete` or `run` there requires
+  an explicit policy file. This stays off through V1. `create` was in that list until
+  2026-08-19 and is not any more — see the timeline entry for the reasoning, which
+  turns on `add` refusing to overwrite and on the MCP toolset having no path to the
+  action at all.
 - **There is no `resolveOne` on `SecretBackend`.** The batch-only shape is
   intentional: it makes "resolve one secret and print it" awkward to write, which is
   the point.
@@ -117,6 +120,51 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-08-19 — The default that taught people to store credentials elsewhere
+
+**What happened.** Running `agent-secrets add CLOUDFLARE_REGISTRAR_API_TOKEN --project
+bxlabs --env production` was refused: `Action "create" is not allowed in
+bxlabs/production`. Nothing was wrong with the command. `bxlabs` was simply not
+declared in the operator's policy file, so evaluation fell back to
+`DEFAULT_ENVIRONMENT_RULES`, where `production` allowed `list` and `describe` and
+nothing else.
+
+**Why the default was wrong.** It was written to keep an agent away from production
+credentials, but it never did that, because an agent cannot reach `create` in the
+first place. The MCP server asserts `request-create` and `request-rotate`
+(`packages/mcp-server/src/server.ts:158,181`); there is no tool that asserts `create`.
+And `create` is the one write that cannot destroy anything: `runAdd` refuses an
+existing name with `ConflictError` (FR-ADD-005), so it adds or it fails. What the
+default actually did was charge the human at the keyboard a hand-written YAML file for
+the product's most ordinary act — which is how a credential ends up in a `.env`
+instead.
+
+**What changed.** `DEFAULT_ENVIRONMENT_RULES.production.allow` is now `list`,
+`describe`, `create`. `rotate`, `delete` and `run` stay closed: each touches a value
+production is already using, and opening one should leave a trace in a reviewed
+commit. The narrowed promise is recorded in the threat model — an injected agent can
+now talk a human into *storing* a credential nobody asked for, though it adds a name
+rather than replacing one and the value never reaches the agent.
+
+**The second bug, found on the way.** `PolicyDeniedError`'s hint said *"Adjust
+agent-secrets.policy.yaml"* — a relative path nothing reads. `loadPolicy` opens only
+`paths.policyFile` under the config home, deliberately, so a cloned repository cannot
+grant itself production access (`packages/cli/src/context.ts:155`). Following that
+hint meant editing a file in your project directory and seeing the same denial again,
+which reads as a broken tool rather than a decision you can change. `PolicyEngine` now
+takes an optional `policyFile`, passed by the CLI and the MCP binary, and the hint
+names the absolute path and the exact key: `Add "delete" to
+projects.ezjob.environments.production.allow in /…/policy.yaml`.
+
+**Also.** `scripts/demo.mjs` step 6 demonstrated the refusal with a production `add`,
+which now succeeds; it demonstrates a production `rotate` instead. `README.md`,
+`DOC.md` §6.1, `docs/recovery.md`, `docs/threat-model.md` and
+`agent-secrets.policy.example.yaml` were corrected in the same pass.
+
+**Not done.** There is still no way to edit policy without hand-writing YAML in a
+hidden directory. An `agent-secrets policy allow <project> <env> <action>` command
+would close that; the corrected hint is a mitigation, not a fix.
 
 ### 2026-08-16 — The portable process: what every MCP client is told
 

@@ -16,7 +16,7 @@
  *   3. adding a secret prints metadata and never the value;
  *   4. listing and describing expose no value, length, or fingerprint;
  *   5. `run` injects into a child — and redacts what the child prints back;
- *   6. production is refused by the default policy;
+ *   6. a production rotation is refused by the default policy;
  *   7. the value exists in exactly one place: the vault.
  */
 
@@ -204,13 +204,17 @@ try {
   );
 
   heading(
-    'Ask for production',
+    'Ask to overwrite a production credential',
     'Denied by the default policy, in code — not in a prompt an agent could argue with.',
   );
+  // `rotate`, not `add`: the default policy permits creating a production
+  // secret that does not exist yet, because that can neither overwrite nor
+  // disclose anything. Replacing a value something in production is currently
+  // using is the decision that has to be written down first.
   show(
-    'add STRIPE_SECRET_KEY --project demo --env production --stdin',
+    'rotate STRIPE_SECRET_KEY --project demo --env production --stdin',
     await run(
-      ['add', 'STRIPE_SECRET_KEY', '--project', 'demo', '--env', 'production', '--stdin'],
+      ['rotate', 'STRIPE_SECRET_KEY', '--project', 'demo', '--env', 'production', '--stdin'],
       env,
       { stdin: SECRET },
     ),

@@ -193,15 +193,43 @@ describe('CLI lifecycle', () => {
     expect(`${result.stderr}${result.stdout}`).toMatch(/development|preview|production/);
   });
 
-  it('denies a production write under the default policy', async () => {
+  it('denies a production rotation under the default policy', async () => {
     await enrol();
     const result = await cli(
-      ['add', 'STRIPE_KEY', '--project', 'payments', '--env', 'production', '--stdin'],
+      ['rotate', 'STRIPE_KEY', '--project', 'payments', '--env', 'production', '--stdin'],
       { stdin: newCanary() },
     );
 
     expect(result.code).toBe(4);
     expect(result.stderr).toContain('production');
+  });
+
+  it('allows a production create under the default policy, and still prints no value', async () => {
+    // The default used to deny this, which bought no protection — `add` cannot
+    // overwrite, and no MCP tool reaches this action — and cost the operator a
+    // hand-written policy file for the most ordinary thing the product does.
+    await enrol();
+    const canary = newCanary();
+    const result = await cli(
+      ['add', 'STRIPE_KEY', '--project', 'payments', '--env', 'production', '--stdin'],
+      { stdin: canary },
+    );
+
+    expect(result.code).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
+  });
+
+  it('names the policy file and the key to add when it denies', async () => {
+    await enrol();
+    const result = await cli(
+      ['rotate', 'STRIPE_KEY', '--project', 'payments', '--env', 'production', '--stdin'],
+      { stdin: newCanary() },
+    );
+
+    // The hint has to name the file the CLI actually reads. It used to name a
+    // relative `agent-secrets.policy.yaml`, which nothing opens.
+    expect(result.stderr).toContain('policy.yaml');
+    expect(result.stderr).toContain('projects.payments.environments.production.allow');
   });
 
   it('emits a stable JSON envelope with no value field', async () => {

@@ -62,7 +62,7 @@ export async function createContext(options: CreateContextOptions): Promise<Cont
   const config = await loadConfig(paths);
   const credentials = options.credentials ?? defaultCredentialStore(paths.home, env);
   const redaction = new RedactionScope();
-  const policy = new PolicyEngine(await loadPolicy(paths));
+  const policy = new PolicyEngine(await loadPolicy(paths), { policyFile: paths.policyFile });
 
   const audit: AuditSink =
     config?.audit.enabled === false

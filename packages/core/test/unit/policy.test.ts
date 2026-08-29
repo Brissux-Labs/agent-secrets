@@ -29,14 +29,12 @@ function ref(project: string, environment: string, name = 'OPENAI_API_KEY'): Sec
   return { ...scope(project, environment), name } as SecretRef;
 }
 
-const MUTATIONS: Action[] = [
-  'create',
-  'rotate',
-  'delete',
-  'run',
-  'request-create',
-  'request-rotate',
-];
+/**
+ * The mutations that touch something already in the vault. `create` is
+ * deliberately absent: it can only add a name that does not exist yet, so it is
+ * the one write that cannot destroy a live credential.
+ */
+const DESTRUCTIVE_MUTATIONS: Action[] = ['rotate', 'delete', 'run', 'request-rotate'];
 
 describe('defaultPolicy', () => {
   it('parses into a complete document', () => {
@@ -93,14 +91,28 @@ describe('defaultPolicy', () => {
     expect(decision.reason).toMatch(/deny list/i);
   });
 
-  it('allows only list and describe in production', () => {
+  it('allows list, describe and create in production, and nothing else', () => {
     const engine = new PolicyEngine();
     for (const action of ACTIONS) {
-      const expected = action === 'list' || action === 'describe';
+      const expected = action === 'list' || action === 'describe' || action === 'create';
       expect(engine.evaluate({ action, target: ref('ezjob', 'production') }).allowed, action).toBe(
         expected,
       );
     }
+  });
+
+  it('allows create in production without a policy file', () => {
+    // `create` is the only mutation that can neither overwrite, disclose nor
+    // execute: `agent-secrets add` refuses an existing name with ConflictError,
+    // and the MCP toolset has no path to this action at all — an agent can only
+    // ever reach `request-create`. Denying it by default cost the human at the
+    // keyboard a hand-written policy file and bought no protection.
+    const decision = new PolicyEngine().evaluate({
+      action: 'create',
+      target: ref('never-declared-anywhere', 'production'),
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.requiresHumanApproval).toBe(false);
   });
 
   for (const action of ['delete', 'rotate', 'run', 'request-create'] as const) {
@@ -117,10 +129,10 @@ describe('defaultPolicy', () => {
     });
   }
 
-  it('never allows a production mutation for any project name', () => {
+  it('never allows a destructive production mutation for any project name', () => {
     const engine = new PolicyEngine();
     for (const project of ['ezjob', 'other', 'a-b-c', 'never-seen-before']) {
-      for (const action of MUTATIONS) {
+      for (const action of DESTRUCTIVE_MUTATIONS) {
         expect(
           engine.evaluate({ action, target: ref(project, 'production') }).allowed,
           `${project}/${action}`,
@@ -151,6 +163,9 @@ describe('unknown targets', () => {
     ).toBe(false);
     expect(
       engine.evaluate({ action: 'create', target: ref('never-seen', 'development') }).allowed,
+    ).toBe(true);
+    expect(
+      engine.evaluate({ action: 'create', target: ref('never-seen', 'production') }).allowed,
     ).toBe(true);
   });
 
@@ -455,8 +470,38 @@ describe('PolicyEngine.assert', () => {
     expect(denied.code).toBe('POLICY_DENIED');
     expect(denied.exitCode).toBe(4);
     expect(denied.reference).toBe('ezjob/production');
-    expect(denied.hint).toContain('agent-secrets.policy.yaml');
+    expect(denied.hint).toContain('policy file');
     expect(denied.toSafeJSON().code).toBe('POLICY_DENIED');
+  });
+
+  it('names the policy file it actually reads, and the key to add', () => {
+    // The old hint said "Adjust agent-secrets.policy.yaml", a relative path the
+    // CLI never reads: `loadPolicy` only ever opens the file under the config
+    // home. Following that hint edited a file with no effect on the decision.
+    const engine = new PolicyEngine(defaultPolicy(), {
+      policyFile: '/home/dev/.config/agent-secrets/policy.yaml',
+    });
+    try {
+      engine.assert({ action: 'delete', target: ref('ezjob', 'production') });
+      expect.unreachable('assert must throw');
+    } catch (error) {
+      const hint = (error as PolicyDeniedError).hint ?? '';
+      expect(hint).toContain('/home/dev/.config/agent-secrets/policy.yaml');
+      expect(hint).toContain('projects.ezjob.environments.production.allow');
+      expect(hint).toContain('delete');
+    }
+  });
+
+  it('never claims a path it has not been given', () => {
+    const engine = new PolicyEngine();
+    try {
+      engine.assert({ action: 'delete', target: ref('ezjob', 'production') });
+      expect.unreachable('assert must throw');
+    } catch (error) {
+      const hint = (error as PolicyDeniedError).hint ?? '';
+      expect(hint).toContain('policy file');
+      expect(hint).not.toContain('agent-secrets.policy.yaml');
+    }
   });
 
   it('points at the out-of-band channel when approval is what is missing', () => {

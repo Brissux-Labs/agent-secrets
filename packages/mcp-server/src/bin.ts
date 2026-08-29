@@ -70,7 +70,7 @@ async function main(): Promise<void> {
 
   const server = createMcpServer({
     backend,
-    policy: new PolicyEngine(policyDocument),
+    policy: new PolicyEngine(policyDocument, { policyFile: paths.policyFile }),
     // The same append-only file the CLI writes to: what an agent did and what
     // the human did belong in one timeline, not two.
     audit: new JsonlAuditSink(paths.auditFile, config.audit.maxBytes),

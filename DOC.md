@@ -264,7 +264,9 @@ agent-secrets delete --project <slug> --env <environment> --name <NAME> --yes
 - `--yes` is mandatory in a non-interactive context. Interactively, the operator
   retypes the secret's **name** (not its value) to confirm.
 - Deletion in `production` is denied by the default policy and stays denied until a
-  policy file says otherwise.
+  policy file says otherwise. So are `rotate` and `run`: every action that touches a
+  credential production is already using. `create` is the exception — it can only add
+  a name that does not exist yet.
 
 **Exit:** 0; 5 if the record does not exist; 4 if policy forbids `delete`.
 
@@ -445,7 +447,7 @@ With no policy file present:
 | ------------- | ------------------------------------------------------------------------- | ---------------------------------- |
 | `development` | `list`, `describe`, `request-create`, `request-rotate`, `create`, `rotate`, `delete`, `run` | —                 |
 | `preview`     | `list`, `describe`, `request-create`, `request-rotate`, `run`             | `request-create`, `request-rotate` |
-| `production`  | `list`, `describe`                                                        | —                                  |
+| `production`  | `list`, `describe`, `create`                                              | —                                  |
 
 Default command lists: `denyExecutables` is `env`, `printenv`, `sh`, `bash`, `zsh`,
 `dash`, `fish`, `ksh`; `allowExecutables` is empty (meaning "no allow-list
