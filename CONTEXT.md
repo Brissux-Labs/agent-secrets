@@ -16,8 +16,9 @@ tests, because every session dutifully appended an entry and nobody touched the 
 
 ## Where things stand
 
-**Overall: pre-release, feature-complete for V1, and now proven against a real vault
-on one machine.** Not published to npm, not externally reviewed.
+**Overall: pre-release, feature-complete for V1, and in daily use against a real
+vault on two machines since mid-August 2026.** Not published to npm, not externally
+reviewed.
 
 | Area                          | State                                                        |
 | ----------------------------- | ------------------------------------------------------------ |
@@ -29,7 +30,7 @@ on one machine.** Not published to npm, not externally reviewed.
 | `@bx-labs/agent-secrets` (CLI) | Implemented: `init`/`doctor`/`logout`/`add`/`list`/`describe`/`rotate`/`delete`/`run`. |
 | `@bx-labs/agent-secrets-mcp`  | Implemented. Seven tools, none returning a value.             |
 | `apps/api`                    | Implemented. **One integration suite — the thinnest coverage in the tree, on the component that handles a value in transit.** Never run against a real vault. |
-| `apps/telegram`               | Implemented. One integration suite. Never run against a real bot. |
+| `apps/telegram`               | Implemented. One integration suite. Never run against a real bot, and **not wired to the policy engine** — nothing sets `approvalGranted`, so every `humanApproval` action is denied permanently. |
 | Public documentation          | Complete, and now corrected where it had drifted from the code. |
 | CI                            | `.github/workflows/ci.yml` and `release.yml`. CI runs lint, typecheck, build, unit, integration, the secret scan and the raw-getter guard, and is green on `main`. Dependabot is active. |
 
@@ -120,6 +121,90 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-08-29 — Two weeks of real use, two policy files, and a gate that is a wall
+
+**What happened.** The operator reported the product in daily use for about two weeks
+across two machines — a MacBook Air as the main personal computer, a Mac mini running
+the AI agents — and confirmed the flow that matters works: the CLI hands over a
+command, the human types the value at a hidden prompt, the application receives it,
+and no value passes through a clipboard or a conversation. That is the first
+sustained operational report this project has. Verifying it surfaced two defects,
+both found by reading the code the operator's own policy file cited.
+
+**The setup, and the divergence it created.** `config.json`, `policy.yaml` and
+`audit.jsonl` all live under `~/.config/agent-secrets/`
+(`packages/cli/src/config.ts:90-98`), so all three are per-machine. The Bitwarden
+vault is the only shared state. Two machines therefore means two enrolments, two
+policy files that nothing reconciles, and an audit trail split into halves that no
+command joins.
+
+This is not hypothetical. Read in-session on the MacBook Air: a 5698-byte
+`policy.yaml`, last modified 2026-08-24, granting `run` in production to `ezjob`,
+`bxlabs` and `olvia`, `request-create` to `bxlabs` alone, with `allowExecutables`
+empty and `denyExecutables` re-declared by hand. The Mac mini's file was reported
+second-hand as covering `bxlabs`, `ezjob` and `scaleway`, with an executable
+allow-list of `aws`, `node`, `vercel`, `browser-use`, `pnpm` and `double`. The two
+files share neither their project list nor their command lists. The same report held
+that the Air might carry no policy file at all and fall back to the built-in
+defaults; it carries one, and on production `run` it is the more permissive of the
+two. Neither machine can see the other, so nobody could have known.
+
+**Finding 1: `humanApproval` denies permanently. It does not gate.** `evaluate()`
+refuses while the action sits in `humanApproval` and `context.approvalGranted` is not
+true (`packages/core/src/policy.ts:238`). `approvalGranted` is set to `true` in
+exactly four places, all of them in `packages/core/test/unit/policy.test.ts`. None of
+the eleven `assert()` call sites — `commands/lifecycle.ts`, `commands/run.ts`,
+`mcp-server/src/server.ts:114,137,158,181,213,250` — passes the field. `apps/telegram`,
+the intended out-of-band channel, never touches it either. Three consequences:
+
+* **The built-in default carries a dead branch.** `DEFAULT_ENVIRONMENT_RULES.preview`
+  lists `request-create` and `request-rotate` under `humanApproval`
+  (`packages/core/src/policy.ts:135`). On a fresh install with no policy file, the two
+  MCP tools that exist to put a human in the loop are therefore denied permanently in
+  `preview`, under a hint telling the caller to obtain approval and retry. Retrying
+  cannot succeed.
+* **The shipped example walks the reader into it.**
+  `agent-secrets.policy.example.yaml:88-90` says to add `run` to this list *and* to
+  `humanApproval` to allow a production deploy. Following that advice disables the
+  deploy for good.
+* **The tests prove a door works that nothing ever knocks on.** The unit suite grants
+  an approval no caller grants, which is why 565 green tests never caught this.
+
+The operator worked it out independently, left `humanApproval` empty deliberately, and
+wrote the reasoning into the policy file header. That is the right local call. It is
+also the product quietly losing a control it advertises: `docs/threat-model.md` leans
+on human approval, and no deployment can currently use it. Nothing leaks as a result —
+it fails closed, the correct direction — but the documented human-in-the-loop story is
+fiction, and operators who follow the example are pushed to route around it.
+
+**Finding 2: writing a policy file silently removes the executable deny-list.**
+`defaultPolicy()` blocks `env`, `printenv` and six shells
+(`packages/core/src/policy.ts:113`). The *file* schema defaults `denyExecutables` to
+`[]`, and the whole `commands` block to `{ denyExecutables: [], allowExecutables: [] }`
+(`packages/core/src/policy.ts:71-77`). A policy file with no `commands:` block
+therefore permits `agent-secrets run -- env`, which prints every injected secret into
+whatever is reading. The act of writing a policy — something people do to tighten a
+grant — silently loosens the one list that stops the commonest accident, and it
+contradicts the fail-closed rule the rest of this codebase keeps. The operator caught
+it, re-declared the list by hand and added `eval`; nothing in the product would have
+told them.
+
+**Not done.** Nothing was fixed here. Both findings touch a production policy gate and
+the approval path, which `CLAUDE.md` §8 reserves for a human decision. Four items
+follow, none of which exists:
+
+* wire `approvalGranted` to a real channel, or delete `humanApproval` and stop
+  advertising it — the current middle state is the worst of the three;
+* make the file schema inherit the built-in `denyExecutables` rather than defaulting
+  to empty, or refuse a `commands` block that omits it;
+* give the operator a way to see policy across machines: `doctor` reports on the
+  machine it runs on, nothing reveals that two machines disagree, and nothing lints a
+  policy for a rule that undoes itself;
+* read the Mac mini's policy file on the Mac mini. If its `allowExecutables` really is
+  `aws, node, vercel, browser-use, pnpm, double`, the list bounds the name of the
+  binary and not what it does — `node` and `pnpm` both run arbitrary code — while
+  `run` is allowed in production there.
 
 ### 2026-08-19 — The default that taught people to store credentials elsewhere
 
