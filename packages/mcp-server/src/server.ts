@@ -14,6 +14,7 @@ import {
   type PolicyEngine,
   type SecretBackend,
   type SecretRef,
+  toSafeError,
 } from '@bx-labs/agent-secrets-core';
 import { truncate } from '@bx-labs/agent-secrets-redaction';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -111,7 +112,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   server.registerTool(
     'secret_list',
     { description: TOOL_DESCRIPTIONS.secret_list, inputSchema: secretListArgs.shape },
-    async (args) => {
+    guarded(async (args) => {
       const scope = makeScope({ project: args.project, environment: args.environment });
       policy.assert({ action: 'list', target: scope });
 
@@ -128,13 +129,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         count: metadata.length,
         secrets: metadata.map(toSafeMetadata),
       });
-    },
+    }),
   );
 
   server.registerTool(
     'secret_describe',
     { description: TOOL_DESCRIPTIONS.secret_describe, inputSchema: secretDescribeArgs.shape },
-    async (args) => {
+    guarded(async (args) => {
       const ref = makeRef(args);
       policy.assert({ action: 'describe', target: ref });
 
@@ -144,13 +145,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
           ? { reference: formatRef(ref), exists: false }
           : { reference: formatRef(ref), exists: true, metadata: toSafeMetadata(metadata) },
       );
-    },
+    }),
   );
 
   server.registerTool(
     'secret_add_request',
     { description: TOOL_DESCRIPTIONS.secret_add_request, inputSchema: secretAddRequestArgs.shape },
-    async (args) => {
+    guarded(async (args) => {
       const ref = makeRef(args);
       if (options.readOnly) {
         // A link is a write capability with a delay on it. A server an operator
@@ -166,7 +167,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         outcome: 'success',
       });
       return await issueLink(options, 'create', ref);
-    },
+    }),
   );
 
   server.registerTool(
@@ -175,7 +176,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       description: TOOL_DESCRIPTIONS.secret_rotate_request,
       inputSchema: secretRotateRequestArgs.shape,
     },
-    async (args) => {
+    guarded(async (args) => {
       const ref = makeRef(args);
       if (options.readOnly) {
         return fail('This server runs in read-only mode. Secure input links are disabled.');
@@ -197,13 +198,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         outcome: 'success',
       });
       return await issueLink(options, 'rotate', ref);
-    },
+    }),
   );
 
   server.registerTool(
     'secret_copy',
     { description: TOOL_DESCRIPTIONS.secret_copy, inputSchema: secretCopyArgs.shape },
-    async (args) => {
+    guarded(async (args) => {
       const source = makeRef({ project: args.project, environment: args.from, name: args.name });
       const target = makeRef({ project: args.project, environment: args.to, name: args.name });
 
@@ -231,7 +232,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         instruction:
           'The value now exists under the target reference. It was never returned; verify with secret_describe.',
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -240,7 +241,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       description: TOOL_DESCRIPTIONS.secret_delete_request,
       inputSchema: secretDeleteRequestArgs.shape,
     },
-    async (args) => {
+    guarded(async (args) => {
       const ref = makeRef(args);
 
       if (options.readOnly) {
@@ -269,13 +270,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         outcome: 'success',
       });
       return ok({ reference: expected, deleted: true });
-    },
+    }),
   );
 
   server.registerTool(
     'run_with_secrets',
     { description: TOOL_DESCRIPTIONS.run_with_secrets, inputSchema: runWithSecretsArgs.shape },
-    async (args) => {
+    guarded(async (args) => {
       const scope = makeScope({ project: args.project, environment: args.environment });
       const [executable, ...commandArgs] = args.command as [string, ...string[]];
 
@@ -335,13 +336,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         stdout: truncate(outcome.stdout ?? '', maxOutputBytes),
         stderr: truncate(outcome.stderr ?? '', maxOutputBytes),
       });
-    },
+    }),
   );
 
   server.registerTool(
     'secret_health',
     { description: TOOL_DESCRIPTIONS.secret_health, inputSchema: secretHealthArgs.shape },
-    async () => {
+    guarded(async () => {
       const health = await backend.health();
       return ok({
         backend: backend.id,
@@ -353,7 +354,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         secureLinksAvailable: options.linkIssuer !== undefined,
         ...(health.errorCode === undefined ? {} : { errorCode: health.errorCode }),
       });
-    },
+    }),
   );
 
   return server;
@@ -440,6 +441,33 @@ export function handoffCommand(action: 'create' | 'rotate', ref: SecretRef): str
  * Mirrored here rather than imported so this file states, in one place, exactly
  * what shape leaves the server.
  */
+/**
+ * Turn a thrown error into a result the model can act on, without ever
+ * forwarding a message we did not write.
+ *
+ * Left to the SDK, a thrown error becomes `isError: true` with `error.message`
+ * and nothing else — two problems. A `PolicyDeniedError` loses its `hint`, the
+ * one line naming the policy file and the key to add, so the agent reports
+ * "the vault forbids it" and the human cannot act. And an unexpected throwable
+ * — a `bws` failure, a spawn error — would be forwarded verbatim, and those can
+ * embed a value. `toSafeError` withholds the latter; the former is rendered
+ * with its stable code and its hint.
+ */
+function guarded<A>(handler: (args: A) => Promise<ToolResult>): (args: A) => Promise<ToolResult> {
+  return async (args) => {
+    try {
+      return await handler(args);
+    } catch (error) {
+      const safe = toSafeError(error);
+      return fail(
+        [`${safe.code}: ${safe.message}`, ...(safe.hint === undefined ? [] : [safe.hint])].join(
+          ' ',
+        ),
+      );
+    }
+  };
+}
+
 interface ToolResult {
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;

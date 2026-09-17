@@ -23,10 +23,11 @@ import { z } from 'zod';
  * and running `agent-secrets run --manifest dev` would otherwise mean executing
  * a command that repository chose, with credentials you own. That is the
  * classic prompt-injection-adjacent supply chain problem, and the mitigation
- * here is approval: the first time a manifest is used — and every time its
- * contents change — the operator is shown the exact command and must approve
- * it. The approval is keyed by a hash of the manifest, so an edited command is
- * a new approval, not an inherited one.
+ * here is approval: the first time a command is used — and every time that
+ * command changes — the operator is shown the exact command and must approve
+ * it. The approval is keyed by a hash of the command entry (see
+ * `commandDigest`), so an edited command is a new approval, not an inherited
+ * one, and an edit elsewhere in the file leaves it alone.
  */
 
 const commandSchema = z
@@ -64,8 +65,37 @@ export const MANIFEST_FILENAME = 'agent-secrets.yaml';
 export interface LoadedManifest {
   readonly manifest: Manifest;
   readonly path: string;
-  /** SHA-256 of the raw file. Approvals are keyed by this. */
+  /**
+   * SHA-256 of the raw file. Diagnostic only: approvals are keyed by
+   * `commandDigest`, not by this, so that editing one command does not revoke
+   * every other.
+   */
   readonly digest: string;
+}
+
+/**
+ * What an approval is consent to: this project, this command name, this
+ * environment, these secret names, this exact argument vector. Nothing else in
+ * the file — a description, another command, a comment — is part of it.
+ *
+ * Keyed on the whole file, the gate revoked every command whenever any line
+ * changed, and an operator with five production commands re-approved all five
+ * after each edit. A gate that fires that often is one people stop reading
+ * before they answer, which is the failure it exists to prevent.
+ *
+ * The serialisation is canonical by construction: fixed key order, arrays in
+ * declared order, no formatting from the source file.
+ */
+export function commandDigest(loaded: LoadedManifest, name: string): string {
+  const command = selectCommand(loaded, name);
+  const canonical = JSON.stringify({
+    project: loaded.manifest.project,
+    name,
+    environment: command.environment,
+    secrets: command.secrets,
+    command: command.command,
+  });
+  return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
 export async function loadManifest(
@@ -174,10 +204,11 @@ export function isApproved(
   loaded: LoadedManifest,
   command: string,
 ): boolean {
+  const digest = commandDigest(loaded, command);
   return record.approvals.some(
     (approval) =>
       approval.manifestPath === loaded.path &&
-      approval.digest === loaded.digest &&
+      approval.digest === digest &&
       approval.command === command,
   );
 }

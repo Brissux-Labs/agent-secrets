@@ -26,6 +26,7 @@ export {
 } from './credential-store.js';
 export type { ApprovalRecord, LoadedManifest, Manifest, ManifestCommand } from './manifest.js';
 export {
+  commandDigest,
   isApproved,
   loadManifest,
   MANIFEST_FILENAME,

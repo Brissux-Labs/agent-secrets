@@ -91,10 +91,14 @@ describe('defaultPolicy', () => {
     expect(decision.reason).toMatch(/deny list/i);
   });
 
-  it('allows list, describe and create in production, and nothing else', () => {
+  it('allows list, describe, create and request-create in production, and nothing else', () => {
     const engine = new PolicyEngine();
     for (const action of ACTIONS) {
-      const expected = action === 'list' || action === 'describe' || action === 'create';
+      const expected =
+        action === 'list' ||
+        action === 'describe' ||
+        action === 'create' ||
+        action === 'request-create';
       expect(engine.evaluate({ action, target: ref('ezjob', 'production') }).allowed, action).toBe(
         expected,
       );
@@ -115,7 +119,21 @@ describe('defaultPolicy', () => {
     expect(decision.requiresHumanApproval).toBe(false);
   });
 
-  for (const action of ['delete', 'rotate', 'run', 'request-create', 'copy'] as const) {
+  it('allows request-create in production without a policy file', () => {
+    // Same argument as `create`, one step earlier: a request produces a link
+    // or a hand-over command that a human fills in out of band. It adds a
+    // name that does not exist, discloses nothing, and the human sees the
+    // name before typing. Denying it made an agent unable even to *ask* for a
+    // production secret, which sent the value through a clipboard instead.
+    const decision = new PolicyEngine().evaluate({
+      action: 'request-create',
+      target: ref('never-declared-anywhere', 'production'),
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.requiresHumanApproval).toBe(false);
+  });
+
+  for (const action of ['delete', 'rotate', 'run', 'request-rotate', 'copy'] as const) {
     it(`denies "${action}" in production`, () => {
       const decision = new PolicyEngine().evaluate({
         action,

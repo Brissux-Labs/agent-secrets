@@ -182,10 +182,11 @@ secret. Everything in it is hostile.
    encounter, the CLI shows the resolved project, the environments, the secret names,
    and every command with its full executable and argument array, then asks for
    confirmation.
-2. **Approval is recorded per directory and per manifest content.** It is a hash of the
-   manifest — not a "trust this folder forever" flag. Editing the manifest revokes the
-   approval and re-prompts, so a benign manifest cannot quietly become hostile in a
-   later commit.
+2. **Approval is recorded per directory and per command.** It is a hash of the command
+   entry — project, name, environment, secret names, argument vector — not a "trust
+   this folder forever" flag. Editing that command revokes its approval and
+   re-prompts, so a benign command cannot quietly become hostile in a later commit.
+   Editing another command in the same file leaves it alone.
 3. **In a non-interactive context there is no prompt, so there is no approval.** The
    command fails closed with `POLICY_DENIED` / exit 4. An agent cannot approve a
    manifest on your behalf, and neither can CI: CI environments are configured by a
@@ -304,11 +305,18 @@ stored in `manifest-approvals.json` under the CLI's config directory (mode
 `0600`) — never in the project, because an approvals file a repository could
 ship would approve itself.
 
-The approval is keyed by the SHA-256 digest of the manifest file. Editing the
-manifest — adding a secret to a command, changing what it executes, changing its
-environment — produces a different digest, so the stored approval stops matching
-and you are asked again. An approval is consent to a specific command as it was
-written, not standing consent to a file.
+The approval is keyed by the SHA-256 digest of the **command entry**: the project,
+the command name, its environment, its secret names and its argument vector, in a
+canonical serialisation. Editing any of those — adding a secret, changing what it
+executes, moving it to another environment — produces a different digest, so the
+stored approval stops matching and you are asked again. Editing the description,
+a comment, or a different command in the same file changes nothing. An approval
+is consent to a specific command as it was written, not standing consent to a
+file — and not something a neighbouring edit should take away.
+
+Until 2026-09-17 the key was the digest of the whole file, so adding a sixth
+command silently revoked the other five. Approvals recorded that way no longer
+match and are simply asked again, once.
 
 **`--yes` does not waive it.** That flag skips the production *execution*
 confirmation for a scope you named yourself on the command line; it has no

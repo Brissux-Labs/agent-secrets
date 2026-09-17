@@ -1,6 +1,11 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { type ApprovalRecord, approvalRecordSchema, type LoadedManifest } from './manifest.js';
+import {
+  type ApprovalRecord,
+  approvalRecordSchema,
+  commandDigest,
+  type LoadedManifest,
+} from './manifest.js';
 
 /**
  * Persisted manifest approvals.
@@ -9,11 +14,13 @@ import { type ApprovalRecord, approvalRecordSchema, type LoadedManifest } from '
  * until a human has looked at one and said yes. This file is where that "yes"
  * lives.
  *
- * The record is keyed by (manifest path, content digest, command name). The
- * digest is what makes the approval meaningful: editing the manifest — adding a
- * secret to a command, changing what it executes — produces a different digest,
- * so the previous approval no longer matches and the human is asked again. An
- * approval is consent to a specific command, not standing consent to a file.
+ * The record is keyed by (manifest path, command digest, command name). The
+ * digest is what makes the approval meaningful: editing the command — adding a
+ * secret to it, changing what it executes, moving it to another environment —
+ * produces a different digest, so the previous approval no longer matches and
+ * the human is asked again. Editing a *different* command in the same file
+ * does not. An approval is consent to a specific command, not standing consent
+ * to a file, and not something a neighbouring edit should take away.
  *
  * It lives beside the CLI's own config rather than in the project directory, for
  * the obvious reason: an approvals file a repository could ship would approve
@@ -54,7 +61,7 @@ export async function recordApproval(
 
   approvals.push({
     manifestPath: loaded.path,
-    digest: loaded.digest,
+    digest: commandDigest(loaded, command),
     command,
     approvedAt: now.toISOString(),
   });

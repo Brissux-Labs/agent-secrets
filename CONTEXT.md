@@ -34,7 +34,7 @@ reviewed.
 | Public documentation          | Complete, and now corrected where it had drifted from the code. |
 | CI                            | `.github/workflows/ci.yml` and `release.yml`. CI runs lint, typecheck, build, unit, integration, the secret scan and the raw-getter guard, and is green on `main`. Dependabot is active. |
 
-**580 tests across 26 files.** `pnpm verify` is green.
+**587 tests across 26 files.** `pnpm verify` is green.
 
 The core package is the frozen contract everything else builds against. Its public
 API is exported from `packages/core/src/index.ts`; treat that export list as the
@@ -45,8 +45,8 @@ interface and do not widen it casually.
 These are decisions, not oversights. Do not "fix" them without a human saying so.
 
 - **Destructive production mutation is off.** `defaultPolicy()` gives `production`
-  `list`, `describe` and `create`. Enabling `rotate`, `delete`, `run` or `copy` there
-  requires an explicit policy file. This stays off through V1. `create` was in that list until
+  `list`, `describe`, `create` and `request-create`. Enabling `rotate`, `delete`,
+  `run` or `copy` there requires an explicit policy file. This stays off through V1. `create` was in that list until
   2026-08-19 and is not any more — see the timeline entry for the reasoning, which
   turns on `add` refusing to overwrite and on the MCP toolset having no path to the
   action at all.
@@ -88,16 +88,12 @@ because it is the first thing the next reader trusts.
    history was grepped for credential shapes and came back clean — only obvious
    placeholders. That is not the same as running a dedicated tool over every blob.
    Roadmap G2.
-6. **Policy denials leave no trace, and the MCP result drops the hint.** Neither the
-   CLI nor the MCP server records an `outcome: denied` audit event, so a refused
-   action cannot be diagnosed afterwards — the 2026-09-17 audit of a production
-   blockage could not say which gate fired. And `PolicyDeniedError.hint` — the one
-   string naming the file and key to change — is lost on the MCP path, where the SDK
-   serialises only `message`. Found 2026-09-17, not yet fixed.
-7. **Manifest approval is keyed on the digest of the whole file.** Editing one
-   command revokes the approval of every other production command in the manifest,
-   each of which must be re-approved in a terminal. Found 2026-09-17, not yet fixed.
-8. **One machine is enrolled, on one backend, in one region.** Real-vault behaviour
+6. **Policy denials leave no trace.** Neither the CLI nor the MCP server records an
+   `outcome: denied` audit event, so a refused action cannot be diagnosed afterwards —
+   the 2026-09-17 audit of a production blockage could not say which gate fired.
+   Found 2026-09-17, not yet fixed. (The MCP result dropping the hint, found the same
+   day, is fixed: every handler now renders the stable code and the hint.)
+7. **One machine is enrolled, on one backend, in one region.** Real-vault behaviour
    is proven for macOS + `bws` 2.1.0 + the Bitwarden EU cloud, and for nothing else.
    The multi-device revocation story (C10) has not been exercised with real tokens.
 
@@ -130,6 +126,44 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-09-17 (later) — Approval per command, the hint reaches the agent, and asking is allowed
+
+**What happened.** Two more refusals in the same afternoon. The operator asked why
+every production command of `olvia` had to be re-approved, and an agent was refused
+`secret_add_request` for `VERCEL_TOKEN` in `ezjob/production` and could only relay
+"the vault forbids it". Both were on the morning's list; the operator said yes.
+
+**Manifest approval is now keyed per command.** `commandDigest` hashes a canonical
+serialisation of the entry — project, command name, environment, secret names,
+argument vector — and `isApproved`/`recordApproval` compare on that instead of the
+file digest. Editing a command still revokes its own approval; adding or editing
+another one, or a description, no longer touches it. Approvals recorded under the old
+key simply stop matching and are asked once more — fail closed, one prompt. The
+gate's security argument is unchanged: it is consent to a specific command line, and
+that is now literally what is hashed. Pinned by four integration tests, including one
+that plants an old-style file-digest approval and expects a refusal.
+
+**The MCP path renders errors itself.** Every tool handler is wrapped by `guarded`,
+which turns a throwable into `fail("<CODE>: <message> <hint>")` via `toSafeError`. A
+policy denial now reaches the agent with the file and the exact key to add; an
+unexpected throwable — the kind whose message can embed a value — reaches it as the
+sanitised `INTERNAL` sentence rather than verbatim, which the SDK's default would
+have forwarded. Tested both ways.
+
+**`request-create` is allowed in production by default.** It is `create` one step
+earlier: a link, or a hand-over command, that a human fills in out of band, reading
+the name before typing. Denying it while allowing `create` meant an agent could not
+even *ask* for a production secret, which is how `VERCEL_TOKEN` was about to travel
+through a chat. `request-rotate` stays closed: it touches a live value. Threat model
+§5 item 16 now names both. Decided by Antoine, 2026-09-17.
+
+**Local policy** (same backup as the morning): `ezjob` and `4bl1ty` gain
+`request-create` in production.
+
+**Not done.** Denials are still not audited (gap 6). The Mac mini's policy file still
+lists its own production `allow` for `ezjob`, which replaces the default rather than
+extending it — `request-create` must be added there by hand.
 
 ### 2026-09-17 — A production blockage, and the copy that removes its commonest cause
 

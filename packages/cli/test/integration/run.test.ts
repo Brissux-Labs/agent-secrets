@@ -11,9 +11,11 @@ import {
 } from '@bx-labs/agent-secrets-test-helpers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  commandDigest,
   FileCredentialStore,
   KEYCHAIN_SERVICE,
   keychainAccount,
+  loadManifest,
   newDeviceConfig,
   resolvePaths,
   saveConfig,
@@ -788,38 +790,51 @@ describe('manifest approval', () => {
     expect(result.stdout).toContain('deploying');
   });
 
-  it('honours a stored approval and invalidates it when the manifest changes', async () => {
-    await writeManifest('required');
-
-    // realpath, because approvals are keyed by the resolved path: on macOS the
-    // temp directory is itself a symlink, and an approval recorded under the
-    // unresolved name would not match — which is the whole point of resolving.
+  /**
+   * Write an approval the way a human's "yes" at the prompt would, keyed on
+   * the command entry rather than the file — see `commandDigest`.
+   */
+  const approve = async (command: string): Promise<string> => {
     const manifestPath = await realpath(join(home.path, 'agent-secrets.yaml'));
+    const loaded = await loadManifest(home.path);
+    if (!loaded) {
+      throw new Error('manifest missing');
+    }
     const paths = resolvePaths(env as NodeJS.ProcessEnv);
-    const raw = await readFile(manifestPath, 'utf8');
-    const digest = createHash('sha256').update(raw, 'utf8').digest('hex');
-
-    // Simulate the approval a human would have given at an interactive prompt.
+    const existing = await readFile(join(paths.home, 'manifest-approvals.json'), 'utf8')
+      .then((raw) => JSON.parse(raw) as { approvals: unknown[] })
+      .catch(() => ({ approvals: [] }));
     await writeFile(
       join(paths.home, 'manifest-approvals.json'),
       JSON.stringify({
         version: 1,
         approvals: [
+          ...existing.approvals,
           {
             manifestPath,
-            digest,
-            command: 'deploy',
+            digest: commandDigest(loaded, command),
+            command,
             approvedAt: new Date().toISOString(),
           },
         ],
       }),
       { mode: 0o600 },
     );
+    return manifestPath;
+  };
+
+  it('honours a stored approval and invalidates it when the command changes', async () => {
+    await writeManifest('required');
+    // realpath, because approvals are keyed by the resolved path: on macOS the
+    // temp directory is itself a symlink, and an approval recorded under the
+    // unresolved name would not match — which is the whole point of resolving.
+    const manifestPath = await approve('deploy');
 
     const approved = await cli(['run', '--manifest', 'deploy', '--cwd', home.path]);
     expect(approved.code).toBe(0);
 
     // Change what the command executes. The approval was for the old content.
+    const raw = await readFile(manifestPath, 'utf8');
     await writeFile(
       manifestPath,
       raw.replace('["echo", "deploying"]', '["echo", "something-else-entirely"]'),
@@ -828,6 +843,74 @@ describe('manifest approval', () => {
     const afterEdit = await cli(['run', '--manifest', 'deploy', '--cwd', home.path]);
     expect(afterEdit.code).toBe(4);
     expect(afterEdit.stderr).toContain('not approved');
+  });
+
+  it('revokes an approval when the secrets or the environment of the command change', async () => {
+    await writeManifest('required');
+    const manifestPath = await approve('deploy');
+    const raw = await readFile(manifestPath, 'utf8');
+
+    // One more secret handed to the same command line is a different grant.
+    await writeFile(
+      manifestPath,
+      raw.replace('      - DEPLOY_KEY', '      - DEPLOY_KEY\n      - OTHER_KEY'),
+    );
+    expect((await cli(['run', '--manifest', 'deploy', '--cwd', home.path])).code).toBe(4);
+
+    // So is the same command line against a different environment.
+    await writeFile(manifestPath, raw.replace('environment: development', 'environment: preview'));
+    expect((await cli(['run', '--manifest', 'deploy', '--cwd', home.path])).code).toBe(4);
+  });
+
+  it('keeps an approval when another command is added or edited', async () => {
+    // The gate is consent to one command as written. It used to be keyed on
+    // the whole file, so adding a second command silently revoked the first —
+    // and an operator with five production commands re-approved all five
+    // after every edit, which teaches people to stop reading what they approve.
+    await writeManifest('required');
+    const manifestPath = await approve('deploy');
+    const raw = await readFile(manifestPath, 'utf8');
+
+    await writeFile(
+      manifestPath,
+      `${raw}  other:\n    environment: development\n    secrets: []\n    command: ["echo", "other"]\n    approval: required\n`,
+    );
+    expect((await cli(['run', '--manifest', 'deploy', '--cwd', home.path])).code).toBe(0);
+
+    // Editing the other command, or its description, changes nothing for this one.
+    await writeFile(
+      manifestPath,
+      `${raw}  other:\n    description: reworded\n    environment: development\n    secrets: []\n    command: ["echo", "changed"]\n    approval: required\n`,
+    );
+    expect((await cli(['run', '--manifest', 'deploy', '--cwd', home.path])).code).toBe(0);
+
+    // And the other command is still unapproved on its own account.
+    expect((await cli(['run', '--manifest', 'other', '--cwd', home.path])).code).toBe(4);
+  });
+
+  it('ignores an approval written against the old whole-file digest', async () => {
+    await writeManifest('required');
+    const manifestPath = await realpath(join(home.path, 'agent-secrets.yaml'));
+    const raw = await readFile(manifestPath, 'utf8');
+    const paths = resolvePaths(env as NodeJS.ProcessEnv);
+    await writeFile(
+      join(paths.home, 'manifest-approvals.json'),
+      JSON.stringify({
+        version: 1,
+        approvals: [
+          {
+            manifestPath,
+            digest: createHash('sha256').update(raw, 'utf8').digest('hex'),
+            command: 'deploy',
+            approvedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+
+    // Fails closed: a stale key costs one prompt, never a silent grant.
+    expect((await cli(['run', '--manifest', 'deploy', '--cwd', home.path])).code).toBe(4);
   });
 
   it('always requires approval for a production manifest command', async () => {

@@ -158,7 +158,7 @@ Restrictive on purpose, and enforced in code rather than in a prompt:
 | ------------- | ------------------------------------------------------------- |
 | `development` | full lifecycle — list, describe, request, create, rotate, delete, run, copy |
 | `preview`     | list, describe, run, copy from development, and requests that need human approval |
-| `production`  | list, describe, and **`create`** — adding a name that does not exist yet. `rotate`, `delete`, `run` and `copy` stay off until you enable them explicitly in a policy file |
+| `production`  | list, describe, **`create`** and **`request-create`** — adding a name that does not exist yet, by hand or by asking a human. `rotate`, `delete`, `run` and `copy` stay off until you enable them explicitly in a policy file |
 
 ## Architecture
 

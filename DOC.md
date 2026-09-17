@@ -476,7 +476,11 @@ With no policy file present:
 | ------------- | ------------------------------------------------------------------------- | ---------------------------------- |
 | `development` | `list`, `describe`, `request-create`, `request-rotate`, `create`, `rotate`, `delete`, `run`, `copy` | —         |
 | `preview`     | `list`, `describe`, `request-create`, `request-rotate`, `run`, `copy`     | `request-create`, `request-rotate` |
-| `production`  | `list`, `describe`, `create`                                              | —                                  |
+| `production`  | `list`, `describe`, `create`, `request-create`                            | —                                  |
+
+`request-create` is `create` one step earlier — a link or a hand-over command that a
+human fills in out of band — and is open in `production` for the same reason. An agent
+that cannot even ask for a production secret sends the value through a clipboard.
 
 `copy` is evaluated on the environment being written to. It is closed in `production`
 by default for the same reason `run` is: an agent can reach it through the MCP server,

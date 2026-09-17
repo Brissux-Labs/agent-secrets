@@ -397,9 +397,9 @@ Read this section twice. It is the most useful part of the document.
     already validated, rather than composed by the model, so it cannot become a
     different command; there is no `--value` flag for it to carry one; and policy is
     re-evaluated when the human runs it, so a production rotation or deletion is still
-    denied. What does *not* bound it: a production *create*, which the default policy
-    permits — an injected agent can therefore talk a human into storing a credential
-    nobody asked for, though it adds a name rather than replacing one and the value
+    denied. What does *not* bound it: a production *create* and *request-create*,
+    which the default policy permits — an injected agent can therefore talk a human
+    into storing a credential nobody asked for, though it adds a name rather than replacing one and the value
     never reaches the agent. Nor does anything bound a human who types a value into a
     prompt they were talked into opening. `AGENT_SECRETS_MCP_READ_ONLY=1` disables both
     paths.

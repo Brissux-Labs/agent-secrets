@@ -161,12 +161,18 @@ const DEFAULT_ENVIRONMENT_RULES: Record<string, { allow: Action[]; humanApproval
      *    process. Each touches what already exists, so each stays closed until
      *    a policy file says otherwise — a decision that then leaves a trace in
      *    a reviewed commit.
+     *  * `request-create` is `create` one step earlier: it produces a link, or
+     *    a hand-over command, that a human fills in out of band. It adds a
+     *    name that does not exist, discloses nothing, and the human reads the
+     *    name before typing. Denying it while allowing `create` meant an agent
+     *    could not even *ask* for a production secret — so the value went
+     *    through a clipboard instead (2026-09-17).
      *  * `copy` cannot overwrite either, but unlike `create` it is reachable
-     *    from the MCP toolset, so an injected agent could seed production with
-     *    a name nobody asked for. It stays closed here and is opened per
-     *    project in a policy file.
+     *    from the MCP toolset and needs no human at all, so an injected agent
+     *    could seed production with a name nobody asked for. It stays closed
+     *    here and is opened per project in a policy file.
      */
-    allow: ['list', 'describe', 'create'],
+    allow: ['list', 'describe', 'create', 'request-create'],
     humanApproval: [],
   },
 };

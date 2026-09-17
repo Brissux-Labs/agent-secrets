@@ -244,8 +244,9 @@ async function planFromManifest(context: Context, options: RunOptions): Promise<
   const commandName = options.manifest as string;
   const entry = selectCommand(loaded, commandName);
 
-  // Approval is keyed by the manifest's content digest, so editing a command
-  // invalidates the approval it previously carried. A production command always
+  // Approval is keyed by the command entry's digest, so editing this command
+  // invalidates the approval it previously carried — and editing another one
+  // does not. A production command always
   // needs one; other commands inherit the manifest's own declaration.
   const needsApproval = entry.approval === 'required' || entry.environment === 'production';
 

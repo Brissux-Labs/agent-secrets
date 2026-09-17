@@ -276,13 +276,25 @@ describe('MCP server', () => {
     expect(textOf(result)).toContain('does not exist');
   });
 
+  it('allows a production add request under the default policy, like create', async () => {
+    // A request produces a link a human fills in out of band: it adds a name,
+    // never overwrites, and the value never comes back this way.
+    await connect({ issuer: stubIssuer });
+    const result = await client.callTool({
+      name: 'secret_add_request',
+      arguments: { project: 'ezjob', environment: 'production', name: 'PROD_KEY' },
+    });
+    expect((result as { isError?: boolean }).isError).toBeFalsy();
+    expect(textOf(result)).toContain('out of band');
+  });
+
   it('denies every production mutation under the default policy', async () => {
     await connect({ issuer: stubIssuer });
     const production = { project: 'ezjob', environment: 'production' as const };
 
     expectRefusal(
       await client.callTool({
-        name: 'secret_add_request',
+        name: 'secret_rotate_request',
         arguments: { ...production, name: 'PROD_KEY' },
       }),
       /not allowed/i,
@@ -407,6 +419,35 @@ describe('MCP server', () => {
     });
   });
 
+  it('tells the agent which key to add, and in which file, when policy denies', async () => {
+    // The message alone reads as "the vault forbids it", which an agent relays
+    // and a human cannot act on. The hint names the file and the exact key —
+    // it is the one line that turns a refusal into a decision the human can
+    // make. The SDK would drop it; the handler must carry it.
+    const policy = new PolicyEngine(defaultPolicy(), { policyFile: '/home/op/policy.yaml' });
+    await connect({ policy, issuer: stubIssuer });
+
+    const result = await client.callTool({
+      name: 'secret_rotate_request',
+      arguments: { project: 'ezjob', environment: 'production', name: 'OPENAI_API_KEY' },
+    });
+    expectRefusal(result, /not allowed/i);
+    expect(textOf(result)).toContain('projects.ezjob.environments.production.allow');
+    expect(textOf(result)).toContain('/home/op/policy.yaml');
+    expect(textOf(result)).toContain('POLICY_DENIED');
+  });
+
+  it('withholds the details of an unexpected failure', async () => {
+    // A backend or spawn error can carry a value in its message. Whatever the
+    // SDK would have forwarded, the model receives a sanitised sentence.
+    await connect();
+    await bws.setFailure('list', 'garbage-output');
+    const result = await client.callTool({ name: 'secret_list', arguments: DEV });
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    expect(textOf(result)).not.toContain(canary);
+    expect(textOf(result)).toMatch(/BACKEND_UNAVAILABLE|INTERNAL/);
+  });
+
   it('cannot be talked out of policy by an argument that claims authorisation', async () => {
     await connect({ issuer: stubIssuer });
 
@@ -415,7 +456,7 @@ describe('MCP server', () => {
     // which was made from the policy document alone.
     expectRefusal(
       await client.callTool({
-        name: 'secret_add_request',
+        name: 'secret_rotate_request',
         arguments: {
           project: 'ezjob',
           environment: 'production',
