@@ -56,6 +56,7 @@ export const SERVER_INSTRUCTIONS = [
   '  A command or app needs it          -> run_with_secrets',
   '  Create one                         -> secret_add_request',
   '  Replace one                        -> secret_rotate_request',
+  '  Same value, higher environment     -> secret_copy (vault to vault, never retyped)',
   '  Delete one                         -> secret_delete_request, confirmation from the human',
   '  Backend or server down             -> report the blockage and stop',
   '',
@@ -125,6 +126,17 @@ export const secretAddRequestArgs = z.object({
 
 export const secretRotateRequestArgs = secretAddRequestArgs;
 
+export const secretCopyArgs = z.object({
+  project: projectArg,
+  name: nameArg,
+  from: z.enum(ENVIRONMENTS).describe('Environment that already holds the value.'),
+  to: z
+    .enum(ENVIRONMENTS)
+    .describe(
+      'Environment to add it to. Must be above "from": development → preview → production.',
+    ),
+});
+
 export const secretDeleteRequestArgs = z.object({
   project: projectArg,
   environment: environmentArg,
@@ -188,6 +200,12 @@ export const TOOL_DESCRIPTIONS = {
     'Ask a human to replace an EXISTING secret value. Same flow and same guarantee: the ' +
     'link goes to them out of band, the value goes from their browser to the vault, and ' +
     'neither reaches you.',
+
+  secret_copy:
+    'Promote a secret that already exists in a lower environment to a higher one, vault to ' +
+    'vault. Use it when the same credential serves two environments, instead of asking the ' +
+    'human to supply it again. It never overwrites an existing target, never copies downward, ' +
+    'and never returns the value. Denied in production unless policy permits it.',
 
   secret_delete_request:
     'Request deletion of a secret. Requires the exact canonical reference as confirmation, ' +

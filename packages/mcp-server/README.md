@@ -50,7 +50,7 @@ than degrading into something less safe.
 
 ## The toolset
 
-Seven tools. The count is part of the contract.
+Eight tools. The count is part of the contract.
 
 | Tool | Returns a value? | Notes |
 | ---- | ---------------- | ----- |
@@ -60,6 +60,7 @@ Seven tools. The count is part of the contract.
 | `secret_add_request` | no | One-time link for a human to enter a new value |
 | `secret_rotate_request` | no | One-time link to replace an existing value |
 | `secret_delete_request` | no | Requires the exact canonical reference as confirmation |
+| `secret_copy` | no | Promotes a value to a higher environment, vault to vault |
 | `run_with_secrets` | no | Runs a command with named secrets in its environment |
 
 `run_with_secrets` takes the command as an argument array — `["pnpm", "test"]`,

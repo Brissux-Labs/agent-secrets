@@ -115,7 +115,7 @@ describe('defaultPolicy', () => {
     expect(decision.requiresHumanApproval).toBe(false);
   });
 
-  for (const action of ['delete', 'rotate', 'run', 'request-create'] as const) {
+  for (const action of ['delete', 'rotate', 'run', 'request-create', 'copy'] as const) {
     it(`denies "${action}" in production`, () => {
       const decision = new PolicyEngine().evaluate({
         action,
@@ -149,6 +149,19 @@ describe('defaultPolicy', () => {
     expect(engine.evaluate({ action: 'create', target }).allowed).toBe(false);
     expect(engine.evaluate({ action: 'delete', target }).allowed).toBe(false);
     expect(engine.evaluate({ action: 'rotate', target }).allowed).toBe(false);
+  });
+
+  it('allows copy into preview by default, and never into production', () => {
+    // `copy` writes a value the human already vetted for a lower environment
+    // into a higher one, vault to vault. It can only add a name that does not
+    // exist yet, so it belongs with `create` in preview — but it is reachable
+    // from the MCP toolset, so production keeps it closed until a policy file
+    // says otherwise.
+    const engine = new PolicyEngine();
+    expect(engine.evaluate({ action: 'copy', target: ref('ezjob', 'preview') }).allowed).toBe(true);
+    expect(engine.evaluate({ action: 'copy', target: ref('ezjob', 'production') }).allowed).toBe(
+      false,
+    );
   });
 });
 

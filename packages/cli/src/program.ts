@@ -1,7 +1,7 @@
 import { EXIT_CODES, isAgentSecretsError } from '@bx-labs/agent-secrets-core';
 import { Command, Option } from 'commander';
 import { runDoctor, runInit, runLogout } from './commands/enrolment.js';
-import { runAdd, runDelete, runDescribe, runList } from './commands/lifecycle.js';
+import { runAdd, runCopy, runDelete, runDescribe, runList } from './commands/lifecycle.js';
 import { runRun } from './commands/run.js';
 import { type Context, createContext } from './context.js';
 import { shouldUseColor, Writer } from './output.js';
@@ -189,6 +189,23 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   )
     .option('--yes <reference>', 'non-interactive confirmation: the exact canonical reference')
     .action(handle((context, name, opts) => runDelete(context, name as string, opts as never)));
+
+  const environmentChoice = (flags: string, description: string): Option =>
+    new Option(flags, description)
+      .makeOptionMandatory(true)
+      .choices(['development', 'preview', 'production']);
+
+  commonOptions(
+    program
+      .command('copy <NAME>')
+      .description(
+        'promote a secret to a higher environment, vault to vault — the value is never shown or retyped',
+      ),
+  )
+    .requiredOption('-p, --project <slug>', 'project slug, e.g. ezjob')
+    .addOption(environmentChoice('--from <environment>', 'source environment'))
+    .addOption(environmentChoice('--to <environment>', 'target environment, above the source'))
+    .action(handle((context, name, opts) => runCopy(context, name as string, opts as never)));
 
   // ── controlled execution ──────────────────────────────────────────────────
 

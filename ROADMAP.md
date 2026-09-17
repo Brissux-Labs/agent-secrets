@@ -209,7 +209,7 @@ replay attempt returns exit-code-8 semantics.
 - [ ] **F4** `run_with_secrets`: policy-checked execution with redacted output.
 - [ ] **F5** Structural guarantee that no default tool can return a value:
       `assertNoValueFields` on every tool result plus a test that enumerates the
-      registered tools and asserts the inventory is exactly the seven above.
+      registered tools and asserts the inventory is exactly the seven above (eight since `secret_copy`, 2026-09-17).
 - [ ] **F6** Policy mode that disables production mutation and execution for MCP
       callers regardless of the project policy file.
 - [ ] **F7** Prompt-injection test corpus: tool arguments and repository content that

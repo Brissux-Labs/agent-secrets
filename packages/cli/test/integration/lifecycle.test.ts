@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { newCanary } from '@bx-labs/agent-secrets-redaction';
 import {
   createFakeBws,
@@ -153,6 +153,159 @@ describe('CLI lifecycle', () => {
     expect(second.code).toBe(6);
     expect(second.stderr).toContain('already exists');
     expect(second.stderr).toContain('rotate');
+  });
+
+  describe('copy', () => {
+    const add = async (environment: string, value: string) =>
+      await cli(
+        [
+          'add',
+          'OPENAI_API_KEY',
+          '--project',
+          'ezjob',
+          '--env',
+          environment,
+          '--stdin',
+          '--provider',
+          'openai',
+        ],
+        {
+          stdin: value,
+        },
+      );
+
+    const copy = async (from: string, to: string, extra: string[] = []) =>
+      await cli([
+        'copy',
+        'OPENAI_API_KEY',
+        '--project',
+        'ezjob',
+        '--from',
+        from,
+        '--to',
+        to,
+        ...extra,
+      ]);
+
+    it('promotes a value vault to vault, and prints none of it', async () => {
+      await enrol();
+      const canary = newCanary();
+      await add('development', canary);
+
+      const result = await copy('development', 'preview');
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('bitwarden/ezjob/preview/OPENAI_API_KEY');
+      expect(result.stdout).not.toContain(canary);
+      expect(result.stderr).not.toContain(canary);
+
+      // The vault is the one place the value belongs, and it must arrive
+      // unchanged: a copy that mangles a credential is worse than none.
+      const state = await bws.readState();
+      const target = state.secrets.find((secret) => secret.key.includes('preview'));
+      expect(target?.value).toBe(canary);
+
+      // Metadata rides along, so the promoted record is as documented as the
+      // original.
+      const described = await cli([
+        '--json',
+        'describe',
+        'OPENAI_API_KEY',
+        '--project',
+        'ezjob',
+        '--env',
+        'preview',
+      ]);
+      expect(described.code).toBe(0);
+      expect(JSON.parse(described.stdout).data.provider).toBe('openai');
+    });
+
+    it('only goes upward: never from production down, never sideways', async () => {
+      await enrol();
+      await add('production', newCanary());
+
+      const downward = await copy('production', 'development');
+      expect(downward.code).toBe(2);
+      expect(downward.stderr).toContain('upward');
+
+      const sideways = await copy('production', 'production');
+      expect(sideways.code).toBe(2);
+    });
+
+    it('refuses to overwrite an existing target', async () => {
+      await enrol();
+      await add('development', newCanary());
+      expect((await copy('development', 'preview')).code).toBe(0);
+
+      // Second time round the target exists; a copy never becomes a rotate.
+      const result = await copy('development', 'preview');
+      expect(result.code).toBe(6);
+      expect(result.stderr).toContain('rotate');
+    });
+
+    it('reports a missing source as not found', async () => {
+      await enrol();
+      const result = await copy('development', 'preview');
+      expect(result.code).toBe(5);
+    });
+
+    it('denies a production copy under the default policy, naming the key to add', async () => {
+      await enrol();
+      const canary = newCanary();
+      await add('development', canary);
+
+      const result = await copy('development', 'production');
+
+      expect(result.code).toBe(4);
+      expect(result.stderr).toContain('projects.ezjob.environments.production.allow');
+      expect(result.stderr).toContain('"copy"');
+      expect(result.stderr).not.toContain(canary);
+
+      const state = await bws.readState();
+      expect(state.secrets.some((secret) => secret.key.includes('production'))).toBe(false);
+    });
+
+    it('honours a policy file that opens production copy, and audits it without the value', async () => {
+      await enrol();
+      const canary = newCanary();
+      await add('development', canary);
+
+      const paths = resolvePaths(env as NodeJS.ProcessEnv);
+      await writeFile(
+        paths.policyFile,
+        [
+          'version: 1',
+          'projects:',
+          '  ezjob:',
+          '    environments:',
+          '      production:',
+          '        allow: [list, describe, create, copy]',
+          'commands:',
+          '  denyExecutables: [env, printenv, sh, bash, zsh, dash, fish, ksh]',
+          '',
+        ].join('\n'),
+        { mode: 0o600 },
+      );
+
+      const result = await copy('development', 'production', ['--json']);
+      expect(result.code).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.status).toBe('ok');
+      expect(envelope.data.status).toBe('copied');
+      expect(envelope.data.from).toBe('bitwarden/ezjob/development/OPENAI_API_KEY');
+      expect(envelope.data.reference).toBe('bitwarden/ezjob/production/OPENAI_API_KEY');
+      expect(result.stdout).not.toContain(canary);
+
+      const audit = await readFile(paths.auditFile, 'utf8');
+      expect(audit).toContain('"operation":"copy"');
+      expect(audit).toContain('"reference":"bitwarden/ezjob/production/OPENAI_API_KEY"');
+      expect(audit).not.toContain(canary);
+
+      const files = await home.readConfigFiles();
+      for (const [path, contents] of Object.entries(files)) {
+        expect(contents, `canary leaked into ${path}`).not.toContain(canary);
+      }
+    });
   });
 
   it('refuses a delete whose confirmation does not match', async () => {

@@ -109,7 +109,7 @@ describe('MCP server', () => {
     await bws.cleanup();
   });
 
-  it('exposes exactly the seven default tools and no raw getter', async () => {
+  it('exposes exactly the eight default tools and no raw getter', async () => {
     await connect();
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name).sort();
@@ -117,6 +117,7 @@ describe('MCP server', () => {
     expect(names).toEqual([
       'run_with_secrets',
       'secret_add_request',
+      'secret_copy',
       'secret_delete_request',
       'secret_describe',
       'secret_health',
@@ -306,6 +307,104 @@ describe('MCP server', () => {
       }),
       /not allowed/i,
     );
+
+    expectRefusal(
+      await client.callTool({
+        name: 'secret_copy',
+        arguments: {
+          project: 'ezjob',
+          name: 'OPENAI_API_KEY',
+          from: 'development',
+          to: 'production',
+        },
+      }),
+      /not allowed/i,
+    );
+    // Denied before the vault was touched: nothing landed in production.
+    const state = await bws.readState();
+    expect(state.secrets.some((secret) => secret.key.includes('production'))).toBe(false);
+  });
+
+  describe('secret_copy', () => {
+    const copyArgs = {
+      project: 'ezjob',
+      name: 'OPENAI_API_KEY',
+      from: 'development',
+      to: 'preview',
+    };
+
+    it('promotes a value vault to vault and returns only references', async () => {
+      await connect();
+      const result = await client.callTool({ name: 'secret_copy', arguments: copyArgs });
+      const text = textOf(result);
+
+      expect((result as { isError?: boolean }).isError).toBeFalsy();
+      expect(text).toContain('bitwarden/ezjob/development/OPENAI_API_KEY');
+      expect(text).toContain('bitwarden/ezjob/preview/OPENAI_API_KEY');
+      expect(text).not.toContain(canary);
+
+      const state = await bws.readState();
+      const target = state.secrets.find((secret) => secret.key.includes('preview'));
+      expect(target?.value).toBe(canary);
+    });
+
+    it('refuses to overwrite, and never goes downward', async () => {
+      await connect();
+      const first = await client.callTool({ name: 'secret_copy', arguments: copyArgs });
+      expect((first as { isError?: boolean }).isError).toBeFalsy();
+      expectRefusal(
+        await client.callTool({ name: 'secret_copy', arguments: copyArgs }),
+        /already exists/i,
+      );
+      expectRefusal(
+        await client.callTool({
+          name: 'secret_copy',
+          arguments: { ...copyArgs, from: 'preview', to: 'development' },
+        }),
+        /upward/i,
+      );
+    });
+
+    it('reports a missing source without touching the target', async () => {
+      await connect();
+      expectRefusal(
+        await client.callTool({ name: 'secret_copy', arguments: { ...copyArgs, name: 'NOPE' } }),
+        /does not exist/i,
+      );
+    });
+
+    it('is disabled in read-only mode', async () => {
+      await connect({ readOnly: true });
+      expectRefusal(
+        await client.callTool({ name: 'secret_copy', arguments: copyArgs }),
+        /read-only/i,
+      );
+    });
+
+    it('honours a policy document that opens production copy', async () => {
+      const policy = new PolicyEngine(
+        parsePolicy({
+          version: 1,
+          projects: {
+            ezjob: {
+              environments: {
+                production: { allow: ['list', 'describe', 'create', 'copy'], humanApproval: [] },
+              },
+            },
+          },
+          commands: { denyExecutables: [], allowExecutables: [] },
+        }),
+      );
+      await connect({ policy });
+
+      const result = await client.callTool({
+        name: 'secret_copy',
+        arguments: { ...copyArgs, to: 'production' },
+      });
+      expect((result as { isError?: boolean }).isError).toBeFalsy();
+      expect(textOf(result)).toContain('bitwarden/ezjob/production/OPENAI_API_KEY');
+      expect(textOf(result)).not.toContain(canary);
+    });
   });
 
   it('cannot be talked out of policy by an argument that claims authorisation', async () => {

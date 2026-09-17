@@ -14,6 +14,8 @@ export {
 } from './config.js';
 export type { Context, CreateContextOptions } from './context.js';
 export { createContext } from './context.js';
+export type { CopySecretOptions } from './copy.js';
+export { assertUpward, copySecret } from './copy.js';
 export type { CredentialStore } from './credential-store.js';
 export {
   defaultCredentialStore,

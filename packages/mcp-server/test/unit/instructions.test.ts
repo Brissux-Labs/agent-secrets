@@ -32,6 +32,7 @@ describe('SERVER_INSTRUCTIONS', () => {
     ['creation goes through the request tools', /secret_add_request/],
     ['rotation goes through the request tools', /secret_rotate_request/],
     ['deletion needs the canonical confirmation', /secret_delete_request/],
+    ['a value already stored elsewhere is copied, not retyped', /secret_copy/],
     ['the CLI fallback is a hidden prompt', /agent-secrets add[\s\S]{0,400}hidden prompt/i],
     ['names reach the application unchanged', /OPENAI_API_KEY/],
     ['derived data is disclosure too', /length[\s\S]{0,60}hash/i],

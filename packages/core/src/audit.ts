@@ -18,6 +18,7 @@ export const auditOperations = [
   'create',
   'rotate',
   'delete',
+  'copy',
   'list',
   'describe',
   'run',

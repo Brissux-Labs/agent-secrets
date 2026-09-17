@@ -27,14 +27,14 @@ reviewed.
 | `@bx-labs/agent-secrets-redaction` | Implemented, 5 test files.                              |
 | `@bx-labs/agent-secrets-test-helpers` | Implemented: fake `bws`, fake Keychain, canary generator, temp-HOME fixtures. |
 | `@bx-labs/agent-secrets-backend-bitwarden` | Implemented. Tested against the fake `bws`, and exercised against real `bws` 2.1.0 and the Bitwarden EU cloud on 2026-08-16. |
-| `@bx-labs/agent-secrets` (CLI) | Implemented: `init`/`doctor`/`logout`/`add`/`list`/`describe`/`rotate`/`delete`/`run`. |
-| `@bx-labs/agent-secrets-mcp`  | Implemented. Seven tools, none returning a value.             |
+| `@bx-labs/agent-secrets` (CLI) | Implemented: `init`/`doctor`/`logout`/`add`/`list`/`describe`/`rotate`/`delete`/`copy`/`run`. |
+| `@bx-labs/agent-secrets-mcp`  | Implemented. Eight tools, none returning a value.             |
 | `apps/api`                    | Implemented. **One integration suite — the thinnest coverage in the tree, on the component that handles a value in transit.** Never run against a real vault. |
 | `apps/telegram`               | Implemented. One integration suite. Never run against a real bot, and **not wired to the policy engine** — nothing sets `approvalGranted`, so every `humanApproval` action is denied permanently. |
 | Public documentation          | Complete, and now corrected where it had drifted from the code. |
 | CI                            | `.github/workflows/ci.yml` and `release.yml`. CI runs lint, typecheck, build, unit, integration, the secret scan and the raw-getter guard, and is green on `main`. Dependabot is active. |
 
-**565 tests across 26 files.** `pnpm verify` is green.
+**580 tests across 26 files.** `pnpm verify` is green.
 
 The core package is the frozen contract everything else builds against. Its public
 API is exported from `packages/core/src/index.ts`; treat that export list as the
@@ -45,8 +45,8 @@ interface and do not widen it casually.
 These are decisions, not oversights. Do not "fix" them without a human saying so.
 
 - **Destructive production mutation is off.** `defaultPolicy()` gives `production`
-  `list`, `describe` and `create`. Enabling `rotate`, `delete` or `run` there requires
-  an explicit policy file. This stays off through V1. `create` was in that list until
+  `list`, `describe` and `create`. Enabling `rotate`, `delete`, `run` or `copy` there
+  requires an explicit policy file. This stays off through V1. `create` was in that list until
   2026-08-19 and is not any more — see the timeline entry for the reasoning, which
   turns on `add` refusing to overwrite and on the MCP toolset having no path to the
   action at all.
@@ -88,7 +88,16 @@ because it is the first thing the next reader trusts.
    history was grepped for credential shapes and came back clean — only obvious
    placeholders. That is not the same as running a dedicated tool over every blob.
    Roadmap G2.
-6. **One machine is enrolled, on one backend, in one region.** Real-vault behaviour
+6. **Policy denials leave no trace, and the MCP result drops the hint.** Neither the
+   CLI nor the MCP server records an `outcome: denied` audit event, so a refused
+   action cannot be diagnosed afterwards — the 2026-09-17 audit of a production
+   blockage could not say which gate fired. And `PolicyDeniedError.hint` — the one
+   string naming the file and key to change — is lost on the MCP path, where the SDK
+   serialises only `message`. Found 2026-09-17, not yet fixed.
+7. **Manifest approval is keyed on the digest of the whole file.** Editing one
+   command revokes the approval of every other production command in the manifest,
+   each of which must be re-approved in a terminal. Found 2026-09-17, not yet fixed.
+8. **One machine is enrolled, on one backend, in one region.** Real-vault behaviour
    is proven for macOS + `bws` 2.1.0 + the Bitwarden EU cloud, and for nothing else.
    The multi-device revocation story (C10) has not been exercised with real tokens.
 
@@ -121,6 +130,61 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-09-17 — A production blockage, and the copy that removes its commonest cause
+
+**What happened.** The operator reported an agent refusing to work with
+`olvia/production` and asked for the rules to be loosened. An audit came first, and
+its main finding was that this machine's policy already granted `run` there: the
+blockage was one of four other gates — the Mac mini's policy (which has no `olvia`
+entry at all), `request-create`/`request-rotate` (granted to `bxlabs` only),
+manifest approvals (every one of olvia's had been invalidated by later edits to
+`agent-secrets.yaml`, and `realtime-brancher-openai` was never approved), or the
+non-TTY production confirmation. Which one could not be determined, because
+**no policy denial is ever audited** — the schema has `outcome: denied`, nothing
+writes it — and the MCP path drops `PolicyDeniedError.hint`, so the agent could only
+report "the vault forbids it". Both are now in the gap list above.
+
+**The real cost, in the operator's words.** The same key serves development and
+production; a policy that lets an agent *ask* for the production copy still sends the
+human back to the provider — or to wherever they kept the value in between — to type
+it a second time. That second trip is the store this product exists to replace.
+
+**What was built: `copy`.** A new policy action and a matching command on both
+surfaces:
+
+* `agent-secrets copy NAME --project P --from development --to production`, and the
+  MCP tool `secret_copy`. Both call one function, `copySecret` in
+  `packages/cli/src/copy.ts`, so they make the same decisions in the same order:
+  direction, policy on the target, source exists, target does not, resolve, create,
+  dispose.
+* The value goes backend → backend through the adapter. The CLI registers it with
+  its redaction scope; the MCP handler never holds it where a result is built. Tests
+  on both surfaces run the flow with a canary and assert it is absent from stdout,
+  stderr, the tool result, the audit file and the config home — and present, intact,
+  in the fake vault under the target key.
+* **Upward only** (`development → preview → production`), same project, same name,
+  **never overwrites** (`CONFLICT`, use `rotate`). Metadata rides along.
+* **Default policy:** allowed into `preview`, denied into `production`. Unlike
+  `create`, `copy` is reachable from the MCP toolset, so an injected agent could seed
+  production with a name nobody asked for; opening it is a per-project line in a
+  policy file, like `run`. `docs/threat-model.md` §5 item 16 records the residual
+  risk.
+* The MCP inventory is now **eight** tools. Still none returns a value; the count is
+  corrected everywhere it was stated as a contract, and the enumeration test pins it.
+* Audit operation `copy`, on the target reference.
+
+**Decided by Antoine, 2026-09-17, and applied to this machine's policy file** (backup
+at `policy.yaml.bak-2026-09-17`): `olvia/production` gains `request-create`,
+`request-rotate` and `copy`; `ezjob`, `bxlabs` and `4bl1ty` gain `copy`. `rotate` and
+`delete` stay closed everywhere in production.
+
+**Not done.** Audit of denials, the MCP hint, per-command manifest approvals, and the
+two 2026-08-29 findings — each is a gate or a sink and waits for a human decision. The
+Mac mini's policy was not touched from here; `olvia` must be added there too or the
+agent on that machine keeps hitting the built-in defaults. Also noticed:
+`docs/mcp.md` §4 describes an `--mcp-policy strict|project` flag that `bin.ts` does
+not implement — the only clamp is `AGENT_SECRETS_MCP_READ_ONLY=1`.
 
 ### 2026-08-29 — Two weeks of real use, two policy files, and a gate that is a wall
 

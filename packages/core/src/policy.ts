@@ -29,6 +29,13 @@ export const ACTIONS = [
   'rotate',
   'delete',
   'run',
+  /**
+   * Vault-to-vault promotion: write the value a lower environment already
+   * holds into a higher one, without it ever leaving the backend adapter.
+   * Evaluated against the *target* scope, because that is where a name is
+   * added. It can only add a name that does not exist yet, like `create`.
+   */
+  'copy',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -127,11 +134,12 @@ const DEFAULT_ENVIRONMENT_RULES: Record<string, { allow: Action[]; humanApproval
       'rotate',
       'delete',
       'run',
+      'copy',
     ],
     humanApproval: [],
   },
   preview: {
-    allow: ['list', 'describe', 'request-create', 'request-rotate', 'run'],
+    allow: ['list', 'describe', 'request-create', 'request-rotate', 'run', 'copy'],
     humanApproval: ['request-create', 'request-rotate'],
   },
   production: {
@@ -153,6 +161,10 @@ const DEFAULT_ENVIRONMENT_RULES: Record<string, { allow: Action[]; humanApproval
      *    process. Each touches what already exists, so each stays closed until
      *    a policy file says otherwise — a decision that then leaves a trace in
      *    a reviewed commit.
+     *  * `copy` cannot overwrite either, but unlike `create` it is reachable
+     *    from the MCP toolset, so an injected agent could seed production with
+     *    a name nobody asked for. It stays closed here and is opened per
+     *    project in a policy file.
      */
     allow: ['list', 'describe', 'create'],
     humanApproval: [],

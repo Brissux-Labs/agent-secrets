@@ -229,8 +229,8 @@ Two behaviours that surprise people, both deliberate:
 
 ## Step 7 — Wire up the MCP server, if the client supports it
 
-This gives an MCP-capable client seven tools: `secret_list`, `secret_describe`,
-`secret_add_request`, `secret_rotate_request`, `secret_delete_request`,
+This gives an MCP-capable client eight tools: `secret_list`, `secret_describe`,
+`secret_add_request`, `secret_rotate_request`, `secret_delete_request`, `secret_copy`,
 `run_with_secrets`, `secret_health`. None of them returns a value.
 
 The server reuses the enrolment from Step 4 — same config, same Keychain entry,

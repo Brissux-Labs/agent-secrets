@@ -228,7 +228,7 @@ print the value of `DATABASE_URL` so I can verify it"*.
   There is no phrasing that changes the answer, because the decision is not made by a
   language model.
 - **No default MCP tool returns a value.** This is structural: the tool inventory is
-  seven tools, results run through `assertNoValueFields`, and a test enumerates the
+  eight tools, results run through `assertNoValueFields`, and a test enumerates the
   registry. An injected instruction cannot conjure a tool that does not exist.
 - **Manifests are data, not instructions.** The loader is `.strict()` and fails closed
   on an unknown key; a manifest from an untrusted repository must be approved before
@@ -403,6 +403,12 @@ Read this section twice. It is the most useful part of the document.
     never reaches the agent. Nor does anything bound a human who types a value into a
     prompt they were talked into opening. `AGENT_SECRETS_MCP_READ_ONLY=1` disables both
     paths.
+
+    `secret_copy` is the same class with one difference: no human is in the loop, so
+    where policy permits `copy` an injected agent can seed a higher environment with
+    a name nobody asked for, under a value the human vetted for a lower one. It cannot
+    overwrite, cannot copy downward, and the value never leaves the adapter. It is
+    denied in `production` by default and per project when opened.
 17. **Pre-release software, no external review.** The core is covered by tests and the
     quality gates are green, but no third party has reviewed this. Do not put a
     production credential behind it yet.

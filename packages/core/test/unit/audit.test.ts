@@ -28,6 +28,15 @@ function canary(): string {
   return `ASECRET_CANARY_${randomBytes(12).toString('hex').toUpperCase()}`;
 }
 
+describe('auditOperations', () => {
+  it('names copy, so a vault-to-vault promotion leaves a trace', () => {
+    expect(auditOperations).toContain('copy');
+    expect(
+      auditEventSchema.safeParse(buildAuditEvent({ ...BASE_INPUT, operation: 'copy' })).success,
+    ).toBe(true);
+  });
+});
+
 describe('buildAuditEvent', () => {
   it('produces a valid event with a generated id and ISO timestamp', () => {
     const event = buildAuditEvent(BASE_INPUT);

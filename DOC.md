@@ -327,6 +327,35 @@ drive an interactive prompt on stdout. `--pass-through-output` hands the child
 this terminal directly for the cases that need it — and turns the filter off for
 that run. The CLI warns every time it is used.
 
+### 2.11 `agent-secrets copy`
+
+Promote a value that one environment already holds to a higher environment, vault to
+vault.
+
+```bash
+agent-secrets copy <NAME> --project <slug> --from <environment> --to <environment>
+```
+
+- The case it exists for: the same provider key serves `development` and `production`,
+  and the operator has already typed it once at a hidden prompt. Without `copy`, the
+  second environment means fetching the value from the provider again — or from
+  wherever it was kept in between, which is the store this product exists to replace.
+- The value travels backend → backend through the adapter, is disposed the moment the
+  write returns, and is never printed, returned, or written anywhere else. Metadata
+  (`description`, `provider`, `tags`) rides along.
+- **Upward only.** `development → preview`, `development → production`,
+  `preview → production`. A production value is never copied down, and the project
+  and name never change.
+- **Never overwrites.** An existing target is `CONFLICT`; use `rotate` to replace it.
+- Policy is asserted on the **target** with the `copy` action, before the backend is
+  read. Under the default policy `copy` is allowed into `preview` and denied into
+  `production`, like `run`: unlike `create`, it is reachable from the MCP toolset.
+- Audit: `copy`, on the target reference.
+
+**Exit:** 0; 2 if the direction is not upward; 4 if policy forbids `copy` in the target
+environment; 5 if the source does not exist; 6 if the target already exists; 7 if the
+backend is unreachable.
+
 ---
 
 ## 3. JSON output envelope
@@ -423,7 +452,7 @@ checked by `assertNoValueFields` before any sink writes.
 | `actorType`         | `human` \| `agent` \| `device` \| `telegram`                       |
 | `actorId`           | Opaque: device id, Telegram numeric user id, MCP client name       |
 | `deviceId`          | Optional                                                           |
-| `operation`         | `init`, `logout`, `doctor`, `create`, `rotate`, `delete`, `list`, `describe`, `run`, `request-create`, `request-rotate`, `request-consume` |
+| `operation`         | `init`, `logout`, `doctor`, `create`, `rotate`, `delete`, `copy`, `list`, `describe`, `run`, `request-create`, `request-rotate`, `request-consume` |
 | `reference`         | Canonical reference or scope; empty string for device operations   |
 | `secretNames`       | Optional array of names — names only                               |
 | `commandExecutable` | Optional. **Basename only, never the argument vector**             |
@@ -445,9 +474,13 @@ With no policy file present:
 
 | Environment   | `allow`                                                                   | `humanApproval`                    |
 | ------------- | ------------------------------------------------------------------------- | ---------------------------------- |
-| `development` | `list`, `describe`, `request-create`, `request-rotate`, `create`, `rotate`, `delete`, `run` | —                 |
-| `preview`     | `list`, `describe`, `request-create`, `request-rotate`, `run`             | `request-create`, `request-rotate` |
+| `development` | `list`, `describe`, `request-create`, `request-rotate`, `create`, `rotate`, `delete`, `run`, `copy` | —         |
+| `preview`     | `list`, `describe`, `request-create`, `request-rotate`, `run`, `copy`     | `request-create`, `request-rotate` |
 | `production`  | `list`, `describe`, `create`                                              | —                                  |
+
+`copy` is evaluated on the environment being written to. It is closed in `production`
+by default for the same reason `run` is: an agent can reach it through the MCP server,
+so opening it is a per-project decision written down in a policy file.
 
 Default command lists: `denyExecutables` is `env`, `printenv`, `sh`, `bash`, `zsh`,
 `dash`, `fish`, `ksh`; `allowExecutables` is empty (meaning "no allow-list

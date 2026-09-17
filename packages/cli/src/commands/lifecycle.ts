@@ -14,10 +14,12 @@ import {
   validateSecretValue,
 } from '@bx-labs/agent-secrets-core';
 import type { Context } from '../context.js';
+import { copySecret } from '../copy.js';
 import { confirmByTyping, readValueFromStdin, readValueFromTty } from '../prompts.js';
 
 /**
- * The secret lifecycle commands: `add`, `list`, `describe`, `rotate`, `delete`.
+ * The secret lifecycle commands: `add`, `list`, `describe`, `rotate`, `delete`,
+ * `copy`.
  *
  * Every one of them follows the same order — validate the reference, evaluate
  * policy, then act — and none of them has a code path that prints, returns, or
@@ -116,6 +118,56 @@ export async function runAdd(context: Context, name: string, options: AddOptions
     // Whether the write succeeded or threw, our copy stops existing here.
     value.dispose();
   }
+}
+
+export interface CopyOptions {
+  readonly project: string;
+  readonly from: string;
+  readonly to: string;
+  readonly json?: boolean;
+}
+
+/** `copy` — promote a value to a higher environment. See `../copy.ts`. */
+export async function runCopy(
+  context: Context,
+  name: string,
+  options: CopyOptions,
+): Promise<number> {
+  const source = makeRef({ project: options.project, environment: options.from, name });
+  const target = makeRef({ project: options.project, environment: options.to, name });
+  const backend = await context.requireBackend();
+
+  const result = await copySecret({
+    backend,
+    policy: context.policy,
+    source,
+    target,
+    track: (value) => context.redaction.track(value),
+  });
+
+  await context.audit.record(
+    buildAuditEvent({
+      actorType: 'human',
+      actorId: context.config?.deviceId ?? 'unknown',
+      ...(context.config?.deviceId === undefined ? {} : { deviceId: context.config.deviceId }),
+      operation: 'copy',
+      reference: formatRef(target),
+      secretNames: [target.name],
+      outcome: 'success',
+    }),
+  );
+
+  context.writer.ok(
+    {
+      status: 'copied',
+      from: formatRef(source),
+      reference: result.reference,
+      ...(result.version === undefined ? {} : { version: result.version }),
+      ...(result.createdAt === undefined ? {} : { createdAt: result.createdAt }),
+    },
+    (fmt) => `${fmt.success('✓')} ${formatRef(source)} → ${result.reference}`,
+  );
+  return 0;
 }
 
 export async function runList(context: Context, options: ScopeOptions): Promise<number> {

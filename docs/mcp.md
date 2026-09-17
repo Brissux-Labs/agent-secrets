@@ -19,7 +19,7 @@ calls that produces one, because no code path exists to produce one.
 
 ## 1. Tool inventory
 
-Exactly seven tools. The count is part of the contract: a test enumerates the
+Exactly eight tools. The count is part of the contract: a test enumerates the
 registered tools and fails if the inventory differs.
 
 | Tool | Returns a value? | Mutates? |
@@ -30,6 +30,7 @@ registered tools and fails if the inventory differs.
 | `secret_add_request` | no | no — creates a request for a human |
 | `secret_rotate_request` | no | no — creates a request for a human |
 | `secret_delete_request` | no | no — creates a request for a human |
+| `secret_copy` | no | adds a name in a higher environment, vault to vault |
 | `run_with_secrets` | no | runs a command |
 
 ### Which action to use
@@ -44,6 +45,7 @@ has it without reading this page.
 | Give a command or an application its value | `run_with_secrets` |
 | Create a secret | `secret_add_request` — or the human runs `agent-secrets add NAME --project P --env E` |
 | Replace a secret | `secret_rotate_request` — or `agent-secrets rotate NAME --project P --env E` |
+| Reuse a value that a lower environment already holds | `secret_copy` — vault to vault, the human retypes nothing |
 | Delete a secret | `secret_delete_request`, with the canonical reference as confirmation, supplied by the human |
 | Know whether the backend is healthy | `secret_health` |
 | **Handle a backend that is down** | Report the blockage and stop. Never fall back to a `.env`, a shell variable, or any other plaintext store |
@@ -239,6 +241,41 @@ default.
 
 ---
 
+### `secret_copy`
+
+Promote a secret that already exists in a lower environment to a higher one.
+
+```jsonc
+// arguments
+{ "project": "ezjob", "name": "EXAMPLE_API_KEY", "from": "development", "to": "production" }
+```
+
+```jsonc
+// data
+{
+  "status": "copied",
+  "from": "bitwarden/ezjob/development/EXAMPLE_API_KEY",
+  "reference": "bitwarden/ezjob/production/EXAMPLE_API_KEY",
+  "instruction": "The value now exists under the target reference. It was never returned; …"
+}
+```
+
+- The value goes backend → backend inside the adapter and is disposed after the write.
+  The handler never holds it where a result is built.
+- Upward only (`development → preview → production`), same project, same name. The
+  target must not exist — a copy never becomes a rotation.
+- Policy is asserted on the **target** with the `copy` action, before anything is read.
+  Denied in `production` by default; a policy file opens it per project. Disabled
+  entirely in read-only mode.
+- Audit: `copy` on the target reference, actor `mcp`.
+
+The reason this is a direct action rather than a request: there is no value for a
+human to supply. What an injected agent can do with it is seed a higher environment
+with a name nobody asked for, under a value the human already vetted for a lower one —
+which is why it is closed in `production` until written down.
+
+---
+
 ### `run_with_secrets`
 
 The only tool that causes a value to be read, and it never shows one.
@@ -301,7 +338,7 @@ Four independent layers, so that no single mistake breaks it:
    and `util.inspect`, and `toJSON()` **throws** — so a value reaching a serializer is
    a loud failure, not a placeholder.
 4. **A test enumerates the registered tools** and asserts the inventory is exactly the
-   seven above. A newly added value-returning tool fails the build.
+   eight above. A newly added value-returning tool fails the build.
 
 Adding a raw-value tool — under any name, behind any flag, "just for debugging" —
 requires an explicit, human-approved design change. It is hard boundary 4 in
@@ -414,7 +451,7 @@ problems have always been solved.
   server sees any of it.
 - What *is* enforced in code: no tool returns a value; policy is evaluated before every
   action; `run_with_secrets` output is redacted; every result is walked by
-  `assertNoValueFields`; the tool inventory is fixed at seven.
+  `assertNoValueFields`; the tool inventory is fixed at eight.
 
 So the process rests on both halves. The code guarantees that using this server
 correctly cannot leak a value. The instructions are what make an agent use it in the
@@ -480,7 +517,7 @@ that decides. This is the single most important property of the design.
 
 ### There is no value-returning tool to talk into existence
 
-Injection can only cause an agent to call tools that exist. None of the seven returns
+Injection can only cause an agent to call tools that exist. None of the eight returns
 a value. An instruction to "print the value" has no tool to route through: the agent
 can call `secret_describe` and receive metadata, and that is the end of the road. The
 attack surface is the *tool inventory*, and the inventory is fixed and tested.

@@ -14,6 +14,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./copy": {
+      "types": "./dist/copy.d.ts",
+      "default": "./dist/copy.js"
+    },
     "./runner": {
       "types": "./dist/runner.d.ts",
       "default": "./dist/runner.js"

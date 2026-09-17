@@ -1,3 +1,4 @@
+import { copySecret } from '@bx-labs/agent-secrets/copy';
 import { runWithSecrets } from '@bx-labs/agent-secrets/runner';
 import {
   type AuditEventInput,
@@ -21,6 +22,7 @@ import {
   runWithSecretsArgs,
   SERVER_INSTRUCTIONS,
   secretAddRequestArgs,
+  secretCopyArgs,
   secretDeleteRequestArgs,
   secretDescribeArgs,
   secretHealthArgs,
@@ -195,6 +197,40 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         outcome: 'success',
       });
       return await issueLink(options, 'rotate', ref);
+    },
+  );
+
+  server.registerTool(
+    'secret_copy',
+    { description: TOOL_DESCRIPTIONS.secret_copy, inputSchema: secretCopyArgs.shape },
+    async (args) => {
+      const source = makeRef({ project: args.project, environment: args.from, name: args.name });
+      const target = makeRef({ project: args.project, environment: args.to, name: args.name });
+
+      if (options.readOnly) {
+        return fail('This server runs in read-only mode. Copying is disabled.');
+      }
+
+      // Policy, direction, existence and the write all happen inside
+      // `copySecret`, shared with the CLI. The value it resolves goes to the
+      // backend and is disposed there; nothing in this handler can see it.
+      const result = await copySecret({ backend, policy, source, target });
+
+      await record({
+        actorId: 'mcp',
+        operation: 'copy',
+        reference: formatRef(target),
+        secretNames: [target.name],
+        outcome: 'success',
+      });
+
+      return ok({
+        status: 'copied',
+        from: formatRef(source),
+        reference: result.reference,
+        instruction:
+          'The value now exists under the target reference. It was never returned; verify with secret_describe.',
+      });
     },
   );
 
