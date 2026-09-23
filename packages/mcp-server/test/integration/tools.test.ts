@@ -393,6 +393,22 @@ describe('MCP server', () => {
       );
     });
 
+    it('promotes a key into a shared project with toProject, returning only references', async () => {
+      await connect();
+      const result = await client.callTool({
+        name: 'secret_copy',
+        arguments: { ...copyArgs, to: 'development', toProject: 'bxlabs' },
+      });
+      const text = textOf(result);
+
+      expect((result as { isError?: boolean }).isError).toBeFalsy();
+      expect(text).toContain('bitwarden/bxlabs/development/OPENAI_API_KEY');
+      expect(text).not.toContain(canary);
+      const state = await bws.readState();
+      const target = state.secrets.find((secret) => secret.key.startsWith('bxlabs/'));
+      expect(target?.value).toBe(canary);
+    });
+
     it('honours a policy document that opens production copy', async () => {
       const policy = new PolicyEngine(
         parsePolicy({
@@ -544,6 +560,58 @@ describe('MCP server', () => {
       /EZJOB_OPENAI_API_KEY|OPENAI_API_KEY_DEVELOPMENT|AGENT_SECRETS_OPENAI/,
     );
     expect(text).not.toContain(canary);
+  });
+
+  it('injects project/NAME from a shared project, in the same environment', async () => {
+    await connect();
+    const seeding = new BitwardenBackend({
+      client: new BwsClient({
+        executable: bws.path,
+        accessToken: bws.token,
+        projectId: bws.projectId,
+        valueTransport: 'argv',
+      }),
+    });
+    const shared = newCanary();
+    await seeding.create(
+      makeRef({ project: 'bxlabs', environment: 'development', name: 'SHARED_KEY' }),
+      SecretValue.from(shared),
+    );
+
+    const text = textOf(
+      await client.callTool({
+        name: 'run_with_secrets',
+        arguments: {
+          ...DEV,
+          secrets: ['bxlabs/SHARED_KEY'],
+          command: [
+            process.execPath,
+            '-e',
+            'console.log(process.env.SHARED_KEY ? "present" : "absent")',
+          ],
+        },
+      }),
+    );
+    expect(text).toContain('present');
+    expect(text).not.toContain(shared);
+
+    // Policy is asserted on the shared project too.
+    const policy = new PolicyEngine(
+      parsePolicy({
+        version: 1,
+        projects: {
+          bxlabs: { environments: { development: { allow: ['list'], humanApproval: [] } } },
+        },
+        commands: { denyExecutables: [], allowExecutables: [] },
+      }),
+    );
+    await client.close();
+    await connect({ policy });
+    const denied = await client.callTool({
+      name: 'run_with_secrets',
+      arguments: { ...DEV, secrets: ['bxlabs/SHARED_KEY'], command: ['echo', 'hi'] },
+    });
+    expectRefusal(denied, /projects\.bxlabs\.environments\.development\.allow/);
   });
 
   it('sends its instructions to whatever client connects', async () => {

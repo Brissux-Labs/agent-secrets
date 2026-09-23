@@ -10,9 +10,12 @@ import {
   makeScope,
   parseRef,
   refInScope,
+  resolveSelectors,
   type SecretRef,
   type SecretScope,
   scopeOf,
+  scopesOf,
+  secretSelectorSchema,
 } from '../../src/scope.js';
 
 /**
@@ -314,5 +317,70 @@ describe('scope predicates', () => {
     expect(isProduction(makeScope({ project: 'ezjob', environment: 'production' }))).toBe(true);
     expect(isProduction(VALID_REF)).toBe(false);
     expect(isProduction(makeRef({ ...VALID_REF, environment: 'preview' }))).toBe(false);
+  });
+});
+
+/**
+ * Selectors: how a command names the secrets it needs — `NAME` from its own
+ * project, or `project/NAME` from a shared one such as an organisation-wide
+ * project. The environment always comes from the command, never from the
+ * selector, so a shared key can never pull a production value into a
+ * development command.
+ */
+describe('secret selectors', () => {
+  const scope = makeScope({ project: 'ezjob', environment: 'development' });
+
+  it('resolves a bare name in the command scope', () => {
+    expect(resolveSelectors(['OPENAI_API_KEY'], scope)).toEqual([VALID_REF]);
+  });
+
+  it('resolves project/NAME in the other project, same environment', () => {
+    const [ref] = resolveSelectors(['bxlabs/OPENAI_API_KEY'], scope);
+    expect(ref).toEqual({ ...VALID_REF, project: 'bxlabs' });
+
+    const production = makeScope({ project: 'ezjob', environment: 'production' });
+    expect(resolveSelectors(['bxlabs/OPENAI_API_KEY'], production)[0]?.environment).toBe(
+      'production',
+    );
+  });
+
+  it('refuses a selector that tries to name an environment or a backend', () => {
+    expectRejected(() => resolveSelectors(['bxlabs/production/OPENAI_API_KEY'], scope), 'secrets');
+    expectRejected(() => resolveSelectors(['bitwarden/bxlabs/production/KEY'], scope), 'secrets');
+    expect(secretSelectorSchema.safeParse('bxlabs/production/KEY').success).toBe(false);
+  });
+
+  it('refuses a malformed project or name, and an empty segment', () => {
+    for (const bad of ['BXLABS/KEY', 'bxlabs/key', '/KEY', 'bxlabs/', '../KEY', 'bx labs/KEY']) {
+      expect(secretSelectorSchema.safeParse(bad).success, bad).toBe(false);
+      expectRejected(() => resolveSelectors([bad], scope), 'secrets');
+    }
+  });
+
+  it('refuses two selectors that would inject the same variable name', () => {
+    // The child sees one OPENAI_API_KEY. Picking one of the two silently is
+    // exactly the ambiguity a fail-closed tool must not resolve on its own.
+    expectRejected(
+      () => resolveSelectors(['OPENAI_API_KEY', 'bxlabs/OPENAI_API_KEY'], scope),
+      'secrets',
+    );
+    expectRejected(() => resolveSelectors(['KEY', 'KEY'], scope), 'secrets');
+  });
+
+  it('scopesOf lists each scope read, the command scope first, without duplicates', () => {
+    const refs = resolveSelectors(['bxlabs/A', 'B', 'bxlabs/C', 'shared/D'], scope);
+    expect(scopesOf(refs, scope).map(formatScope)).toEqual([
+      'bitwarden/ezjob/development',
+      'bitwarden/bxlabs/development',
+      'bitwarden/shared/development',
+    ]);
+  });
+
+  it('scopesOf includes the command scope even when nothing is read from it', () => {
+    const refs = resolveSelectors(['bxlabs/A'], scope);
+    expect(scopesOf(refs, scope).map(formatScope)).toEqual([
+      'bitwarden/ezjob/development',
+      'bitwarden/bxlabs/development',
+    ]);
   });
 });

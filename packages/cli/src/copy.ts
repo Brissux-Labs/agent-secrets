@@ -12,7 +12,8 @@ import {
 } from '@bx-labs/agent-secrets-core';
 
 /**
- * Vault-to-vault promotion, shared by `agent-secrets copy` and the MCP
+ * Vault-to-vault promotion — to a higher environment, or into a shared project
+ * that other projects consume — shared by `agent-secrets copy` and the MCP
  * `secret_copy` tool so that both surfaces make exactly the same decisions in
  * exactly the same order.
  *
@@ -45,23 +46,30 @@ export interface CopySecretOptions {
   readonly track?: (value: SecretValue) => void;
 }
 
+/**
+ * The name never changes. Within one project the environment must go up —
+ * the same environment would be the same record. Across projects — promoting
+ * a key into a shared project that others consume — it may stay level or go
+ * up, never down.
+ */
 export function assertUpward(source: SecretRef, target: SecretRef): void {
   const fromRank = ENVIRONMENT_RANK[source.environment] ?? -1;
   const toRank = ENVIRONMENT_RANK[target.environment] ?? -1;
-  if (source.project !== target.project || source.name !== target.name) {
-    throw new InvalidInputError(
-      'A copy keeps the project and the name; only the environment changes.',
-      {
-        field: 'to',
-        reference: formatRef(target),
-      },
-    );
+  const acrossProjects = source.project !== target.project;
+  if (source.name !== target.name) {
+    throw new InvalidInputError('A copy keeps the name; only the project or environment changes.', {
+      field: 'to',
+      reference: formatRef(target),
+    });
   }
-  if (fromRank < 0 || toRank < 0 || fromRank >= toRank) {
+  const upward = acrossProjects ? fromRank <= toRank : fromRank < toRank;
+  if (fromRank < 0 || toRank < 0 || !upward) {
     throw new InvalidInputError('A copy only goes upward: development → preview → production.', {
       field: 'to',
       reference: formatRef(target),
-      hint: 'Name a source environment below the target. A production value is never copied down.',
+      hint: acrossProjects
+        ? 'Across projects the environment may stay the same or go up. A production value is never copied down.'
+        : 'Name a source environment below the target. A production value is never copied down.',
     });
   }
 }
@@ -74,6 +82,11 @@ export async function copySecret(options: CopySecretOptions): Promise<SecretMeta
   // Policy on the target: that is where a name gets added. Asserted before
   // the backend is read, so a denied copy never resolves a value at all.
   policy.assert({ action: 'copy', target });
+  // Across projects, the source decides too: a value leaving its project is a
+  // decision that project's policy makes, not only the receiving one's.
+  if (source.project !== target.project) {
+    policy.assert({ action: 'copy', target: source });
+  }
 
   const sourceMetadata = await backend.describe(source);
   if (!sourceMetadata) {

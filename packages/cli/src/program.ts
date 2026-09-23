@@ -199,12 +199,21 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     program
       .command('copy <NAME>')
       .description(
-        'promote a secret to a higher environment, vault to vault — the value is never shown or retyped',
+        'promote a secret to a higher environment or a shared project, vault to vault — the value is never shown or retyped',
       ),
   )
     .requiredOption('-p, --project <slug>', 'project slug, e.g. ezjob')
     .addOption(environmentChoice('--from <environment>', 'source environment'))
-    .addOption(environmentChoice('--to <environment>', 'target environment, above the source'))
+    .addOption(
+      environmentChoice(
+        '--to <environment>',
+        'target environment: above the source, or the same one with --to-project',
+      ),
+    )
+    .option(
+      '--to-project <slug>',
+      'promote into another project, e.g. a shared one other projects read as project/NAME',
+    )
     .action(handle((context, name, opts) => runCopy(context, name as string, opts as never)));
 
   // ── controlled execution ──────────────────────────────────────────────────
@@ -222,7 +231,10 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
         'production',
       ]),
     )
-    .option('-k, --keys <names>', 'comma-separated secret names to inject')
+    .option(
+      '-k, --keys <names>',
+      'comma-separated secrets to inject: NAME, or project/NAME from a shared project in the same environment',
+    )
     .option('-m, --manifest <command>', 'run a command defined in agent-secrets.yaml')
     .option('--dry-run', 'report which names would be injected and run nothing', false)
     .option('--isolated-env', 'give the child a minimal environment instead of inheriting', false)

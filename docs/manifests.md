@@ -286,6 +286,25 @@ Development gets everything; production gets the minimum; the test command canno
 in production at all. This is the shape most projects should end up with.
 
 
+**A key shared by every project**
+
+```yaml
+version: 1
+project: ezjob
+commands:
+  dev:
+    environment: development
+    secrets: [EXAMPLE_DATABASE_URL, bxlabs/EXAMPLE_API_KEY]
+    command: [pnpm, dev]
+```
+
+`bxlabs/EXAMPLE_API_KEY` is read from the project `bxlabs`, in this command's
+environment, and injected as `EXAMPLE_API_KEY`. There is no organisation level: the
+shared project is an ordinary one, and `run` must be allowed there as well as here.
+A selector cannot name an environment (`bxlabs/production/EXAMPLE_API_KEY` is
+rejected), and a bare name is never looked up in a shared project. See `DOC.md` §1.4.
+
+
 ## Approval, and why it is not a formality
 
 A manifest arrives with a repository. Running one of its commands means handing

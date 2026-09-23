@@ -53,6 +53,29 @@ is encoded into the Bitwarden secret **key**, so `project`, `environment` and `n
 survive a round-trip through the backend without a side table. The Bitwarden record
 id is metadata (`backendId`) — it addresses a record, it says nothing about a value.
 
+### 1.4 Shared projects and selectors
+
+There is no organisation level. A key an operator reuses across every project — one
+provider key — lives once in an ordinary project set aside for it (say `bxlabs`), and
+the commands that need it name it with a **selector**:
+
+```
+selector := [ project "/" ] name        e.g.  OPENAI_API_KEY   bxlabs/OPENAI_API_KEY
+```
+
+- A bare `NAME` resolves in the command's own project; `project/NAME` in that project.
+- **The environment always comes from the command.** A selector cannot name one, so a
+  `development` command reads `bxlabs/development/NAME` and can never reach
+  `bxlabs/production`. A shared key exists once per environment, like any other.
+- **No fallback.** A bare name missing from the command's project is `NOT_FOUND`; it
+  is never looked up in a shared project. Where a credential comes from is written in
+  the manifest or on the command line, not decided by what the vault holds that day.
+- The child receives `NAME`, unprefixed. Two selectors that would inject the same
+  `NAME` are `INVALID_INPUT`.
+- Selectors are accepted by `run --keys`, manifest `secrets:`, and the MCP
+  `run_with_secrets` tool. To put a key into the shared project without retyping it,
+  `copy --to-project` (§2.11).
+
 ---
 
 ## 2. Command surface
@@ -302,6 +325,15 @@ Behaviour, in order:
 8. Write one audit event recording the executable **basename** and the secret
    **names** — never the argument vector, which routinely carries tokens.
 
+**Keys from a shared project.** `--keys` and a manifest's `secrets:` take selectors
+(§1.4): `--keys DATABASE_URL,bxlabs/OPENAI_API_KEY`. Policy for `run` is asserted on
+**every scope read** — the command's own and each shared project, same environment —
+before the backend is contacted, so a shared project decides for itself whether its
+keys may be injected. The audit trail gets one `run` event per scope, each carrying
+the names read from it. A manifest approval prompt names the shared projects, and
+since the selector is part of the approved entry, moving a key to a shared project is
+a new approval.
+
 **Exit semantics.** `run` exits **9** whenever the child exits non-zero or dies on a
 signal; the child's own status is reported in the JSON envelope as
 `data.childExitCode` and `data.signal`. It does *not* forward the child's exit code,
@@ -333,7 +365,8 @@ Promote a value that one environment already holds to a higher environment, vaul
 vault.
 
 ```bash
-agent-secrets copy <NAME> --project <slug> --from <environment> --to <environment>
+agent-secrets copy <NAME> --project <slug> --from <environment> --to <environment> \
+  [--to-project <slug>]
 ```
 
 - The case it exists for: the same provider key serves `development` and `production`,
@@ -352,9 +385,19 @@ agent-secrets copy <NAME> --project <slug> --from <environment> --to <environmen
   `production`, like `run`: unlike `create`, it is reachable from the MCP toolset.
 - Audit: `copy`, on the target reference.
 
+**Into a shared project.** `--to-project bxlabs` writes the target in that project
+instead — the way a key an operator already typed for one project becomes the shared
+one every project reads as `bxlabs/NAME` (§1.4). Across projects:
+
+- the name still never changes, and the environment may stay the same or go **up**,
+  never down;
+- policy for `copy` is asserted on the target **and on the source**: a value leaving
+  its project is that project's decision too. Under the default policy that means a
+  production key is shared only once both projects' policy files open `copy` there.
+
 **Exit:** 0; 2 if the direction is not upward; 4 if policy forbids `copy` in the target
-environment; 5 if the source does not exist; 6 if the target already exists; 7 if the
-backend is unreachable.
+environment, or in the source environment of a cross-project copy; 5 if the source
+does not exist; 6 if the target already exists; 7 if the backend is unreachable.
 
 ---
 
@@ -482,7 +525,8 @@ With no policy file present:
 human fills in out of band — and is open in `production` for the same reason. An agent
 that cannot even ask for a production secret sends the value through a clipboard.
 
-`copy` is evaluated on the environment being written to. It is closed in `production`
+`copy` is evaluated on the environment being written to — and, for a copy into another
+project, on the source as well. It is closed in `production`
 by default for the same reason `run` is: an agent can reach it through the MCP server,
 so opening it is a per-project decision written down in a policy file.
 

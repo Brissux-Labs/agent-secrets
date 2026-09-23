@@ -140,6 +140,79 @@ export function scopeOf(ref: SecretRef): SecretScope {
   return { backend: ref.backend, project: ref.project, environment: ref.environment };
 }
 
+/**
+ * How a command names a secret it needs: `NAME` from its own project, or
+ * `project/NAME` from another one — typically a project that holds the
+ * credentials an organisation reuses everywhere, such as one provider key.
+ *
+ * There is no organisation level in the storage model, on purpose: a shared
+ * project is an ordinary project, governed by the same policy, listed by the
+ * same tools. What this adds is the ability to *consume* from it, and only
+ * explicitly. Two things a selector can never do:
+ *
+ *  - **Choose an environment.** It always inherits the command's. A
+ *    development command reads `bxlabs/development`, never
+ *    `bxlabs/production`, so sharing a key never crosses the boundary the
+ *    policy engine is built around.
+ *  - **Fall back.** A bare name missing from the command's project is not
+ *    looked up anywhere else. Implicit inheritance would make the source of a
+ *    credential depend on what happens to exist in the vault that day.
+ */
+export const SECRET_SELECTOR_PATTERN = /^(?:[a-z0-9][a-z0-9-]{0,62}\/)?[A-Z][A-Z0-9_]{0,127}$/;
+
+export const secretSelectorSchema = z
+  .string()
+  .regex(SECRET_SELECTOR_PATTERN, 'secret must be NAME or project/NAME');
+
+/**
+ * Turn a command's selectors into references in its environment. Throws
+ * `InvalidInputError` on a malformed selector, and on two selectors that would
+ * inject the same variable name — the child can hold only one, and choosing
+ * for the operator is not this function's call.
+ */
+export function resolveSelectors(selectors: readonly string[], scope: SecretScope): SecretRef[] {
+  const refs: SecretRef[] = [];
+  const names = new Set<string>();
+
+  for (const selector of selectors) {
+    if (!secretSelectorSchema.safeParse(selector).success) {
+      // The selector is not echoed: it is caller-supplied text.
+      throw new InvalidInputError('Each secret must be NAME or project/NAME.', {
+        field: 'secrets',
+        hint: 'The environment always comes from the command; a selector cannot name one.',
+      });
+    }
+    const slash = selector.indexOf('/');
+    const project = slash === -1 ? scope.project : selector.slice(0, slash);
+    const name = selector.slice(slash + 1);
+
+    if (names.has(name)) {
+      throw new InvalidInputError(`Two secrets would both be injected as ${name}.`, {
+        field: 'secrets',
+        hint: 'Name each variable once, from the project that should provide it.',
+      });
+    }
+    names.add(name);
+    refs.push(makeRef({ backend: scope.backend, project, environment: scope.environment, name }));
+  }
+  return refs;
+}
+
+/**
+ * Every scope a command touches: its own first, then each project it reads
+ * from, once. Policy is asserted on each — a shared project is not readable
+ * by a command merely because the command's own project allows `run`.
+ */
+export function scopesOf(refs: readonly SecretRef[], scope: SecretScope): SecretScope[] {
+  const scopes = [scope];
+  for (const ref of refs) {
+    if (!scopes.some((known) => refInScope(ref, known))) {
+      scopes.push(scopeOf(ref));
+    }
+  }
+  return scopes;
+}
+
 export function isProduction(target: SecretRef | SecretScope): boolean {
   return target.environment === 'production';
 }

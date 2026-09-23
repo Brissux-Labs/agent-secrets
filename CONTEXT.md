@@ -34,7 +34,7 @@ reviewed.
 | Public documentation          | Complete, and now corrected where it had drifted from the code. |
 | CI                            | `.github/workflows/ci.yml` and `release.yml`. CI runs lint, typecheck, build, unit, integration, the secret scan and the raw-getter guard, and is green on `main`. Dependabot is active. |
 
-**587 tests across 26 files.** `pnpm verify` is green.
+**605 tests across 26 files.** `pnpm verify` is green.
 
 The core package is the frozen contract everything else builds against. Its public
 API is exported from `packages/core/src/index.ts`; treat that export list as the
@@ -96,6 +96,12 @@ because it is the first thing the next reader trusts.
 7. **One machine is enrolled, on one backend, in one region.** Real-vault behaviour
    is proven for macOS + `bws` 2.1.0 + the Bitwarden EU cloud, and for nothing else.
    The multi-device revocation story (C10) has not been exercised with real tokens.
+8. **`docs/manifests.md` and `docs/mcp.md` describe an older shape.** The manifest
+   doc still shows top-level `environments:` and `commands.<name>.executable/args`;
+   the code takes `commands.<name>.environment/secrets/command`. The MCP doc shows
+   `run_with_secrets` with `command` + `args`; the tool takes one `command` array.
+   `DOC.md` and `agent-secrets.example.yaml` match the code. Found 2026-09-23, not
+   yet rewritten — the 2026-09-23 entry only added the shared-project sections.
 
 ## Conventions worth knowing before you touch anything
 
@@ -126,6 +132,46 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-09-23 — Keys shared across projects (`project/NAME`), and copying into one
+
+**What happened.** An agent told the operator that a key had to be retyped into
+`bxlabs`, the project they use as an organisation-wide store: `copy` only moved a
+value between environments of one project, and a command could only read its own
+project. The operator asked for organisation-level keys — one provider key used
+everywhere — and chose, when asked, explicit `bxlabs/NAME` references over a
+machine-local `@org` alias, and cross-project copy in the same pass.
+
+**No organisation level was added to storage.** A shared project stays an ordinary
+project: same grammar, same Bitwarden key encoding, same policy. What changed is
+consumption. `resolveSelectors` (core) turns `NAME` or `project/NAME` into references
+**in the command's environment** — a selector cannot name one, so a development
+command can never reach `bxlabs/production` — and rejects two selectors that would
+inject the same variable. There is deliberately no fallback from a missing bare name
+to the shared project. Accepted by `run --keys`, manifest `secrets:`, and MCP
+`run_with_secrets`.
+
+**Authorisation, which is why the operator was asked first.** `run` is now asserted on
+every scope a command reads (`scopesOf`), before the vault is contacted, so a shared
+project decides whether its keys may be injected. `copy` across projects
+(`--to-project`, MCP `toProject`) is level-or-upward, never down, never overwriting,
+and asserts `copy` on the source as well as the target. Same-project copy is
+unchanged. `run` audits one event per scope, so a shared key is attributed to its
+project. Manifest approvals of existing entries are untouched; the selector is part
+of `commandDigest`, so moving a key to a shared project is a new approval, and the
+prompt names the shared projects.
+
+**Not a widening of the manifest threat.** A manifest could already set `project:` to
+any slug, so naming `bxlabs/NAME` reaches nothing a hostile manifest could not reach
+before; the per-scope policy check is strictly more restrictive than what existed.
+
+**Tests.** 18 new: selector grammar and ordering (core), cross-project `run` with
+canaries, environment confinement, policy on the shared project with zero vault calls,
+duplicate names, manifest selectors, dry run (CLI), cross-project copy direction and
+source policy (CLI), and both MCP tools. 605 tests, `pnpm verify` green.
+
+**Found on the way:** `docs/manifests.md` and `docs/mcp.md` document an older manifest
+and tool shape — gap 8 above.
 
 ### 2026-09-17 (later) — Approval per command, the hint reaches the agent, and asking is allowed
 

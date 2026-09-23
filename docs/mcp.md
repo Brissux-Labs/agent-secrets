@@ -268,6 +268,9 @@ Promote a secret that already exists in a lower environment to a higher one.
   Denied in `production` by default; a policy file opens it per project. Disabled
   entirely in read-only mode.
 - Audit: `copy` on the target reference, actor `mcp`.
+- `toProject` copies into another project instead — typically a shared one that other
+  projects read as `project/NAME`. Across projects the environment may stay the same
+  or go up, and policy is asserted on the source as well as the target.
 
 The reason this is a direct action rather than a request: there is no value for a
 human to supply. What an injected agent can do with it is seed a higher environment
@@ -323,6 +326,13 @@ base64-encodes the value before printing it defeats it, and no filter can fix th
 `run_with_secrets` is a controlled *execution* boundary, not a containment boundary —
 see [`threat-model.md`](threat-model.md) §4.9. If an agent may run a command that
 consumes a production credential, it has the effects of that command.
+
+
+**Keys shared across projects.** An entry of `secrets` may be `project/NAME`, e.g.
+`bxlabs/OPENAI_API_KEY`: read from that project in the **same environment** as the
+call, injected as `NAME`. Policy for `run` is asserted on every project read, and the
+audit trail records one event per project. Nothing is looked up implicitly — a bare
+`NAME` only ever comes from `project`.
 
 ---
 

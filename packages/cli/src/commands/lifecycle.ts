@@ -124,17 +124,23 @@ export interface CopyOptions {
   readonly project: string;
   readonly from: string;
   readonly to: string;
+  /** Promote into another project, typically a shared one. Defaults to `project`. */
+  readonly toProject?: string;
   readonly json?: boolean;
 }
 
-/** `copy` — promote a value to a higher environment. See `../copy.ts`. */
+/** `copy` — promote a value upward, or into a shared project. See `../copy.ts`. */
 export async function runCopy(
   context: Context,
   name: string,
   options: CopyOptions,
 ): Promise<number> {
   const source = makeRef({ project: options.project, environment: options.from, name });
-  const target = makeRef({ project: options.project, environment: options.to, name });
+  const target = makeRef({
+    project: options.toProject ?? options.project,
+    environment: options.to,
+    name,
+  });
   const backend = await context.requireBackend();
 
   const result = await copySecret({

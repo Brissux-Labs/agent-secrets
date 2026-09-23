@@ -54,12 +54,16 @@ export {
   parseRef,
   projectSlugSchema,
   refInScope,
+  resolveSelectors,
   SECRET_NAME_PATTERN,
+  SECRET_SELECTOR_PATTERN,
   SLUG_PATTERN,
   scopeOf,
+  scopesOf,
   secretNameSchema,
   secretRefSchema,
   secretScopeSchema,
+  secretSelectorSchema,
 } from './scope.js';
 export {
   isSecretValue,

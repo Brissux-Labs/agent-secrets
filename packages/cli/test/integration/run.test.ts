@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, readFile, realpath, writeFile } from 'node:fs/promises';
+import { chmod, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { newCanary } from '@bx-labs/agent-secrets-redaction';
 import {
@@ -692,6 +692,202 @@ describe('controlled execution', () => {
     // not something to ignore.
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('manifest');
+  });
+
+  /**
+   * Shared projects: a key the operator reuses everywhere — one provider key —
+   * lives once in a project such as `bxlabs`, and a command names it as
+   * `bxlabs/NAME`. Same environment as the command, policy on both projects,
+   * nothing implicit.
+   */
+  describe('keys from a shared project', () => {
+    const addTo = async (project: string, environment: string, name: string, value: string) => {
+      const result = await cli(
+        ['add', name, '--project', project, '--env', environment, '--stdin'],
+        { stdin: value },
+      );
+      expect(result.code).toBe(0);
+    };
+
+    const sharedProbe = async (): Promise<string> =>
+      await writeProbe(
+        'probe-shared.mjs',
+        `
+        const fs = await import('node:fs/promises');
+        await fs.writeFile(process.env.PROBE_OUT, JSON.stringify({
+          own: process.env.API_KEY ?? null,
+          shared: process.env.SHARED_KEY ?? null,
+        }));
+        `,
+      );
+
+    const runShared = async (keys: string, probe: string, extra: string[] = []) =>
+      await cli([
+        'run',
+        '--project',
+        'ezjob',
+        '--env',
+        'development',
+        '--keys',
+        keys,
+        ...extra,
+        '--',
+        process.execPath,
+        probe,
+      ]);
+
+    it('injects project/NAME from the shared project, under its own name, and leaks nothing', async () => {
+      const own = newCanary();
+      const shared = newCanary();
+      await addSecret('API_KEY', own);
+      await addTo('bxlabs', 'development', 'SHARED_KEY', shared);
+
+      const probe = await sharedProbe();
+      const outPath = join(home.path, 'shared-output.txt');
+      env['PROBE_OUT'] = outPath;
+
+      const result = await runShared('API_KEY,bxlabs/SHARED_KEY', probe);
+
+      expect(result.code).toBe(0);
+      const seen = JSON.parse(await readFile(outPath, 'utf8')) as Record<string, string | null>;
+      expect(seen['own']).toBe(own);
+      expect(seen['shared']).toBe(shared);
+      for (const canary of [own, shared]) {
+        expect(result.stdout).not.toContain(canary);
+        expect(result.stderr).not.toContain(canary);
+      }
+
+      // One audit line per scope read, so the trace says where each name came
+      // from rather than attributing a bxlabs key to ezjob.
+      const paths = resolvePaths(env as NodeJS.ProcessEnv);
+      const lines = (await readFile(paths.auditFile, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((event) => event['operation'] === 'run');
+      expect(lines.map((event) => [event['reference'], event['secretNames']])).toEqual([
+        ['bitwarden/ezjob/development', ['API_KEY']],
+        ['bitwarden/bxlabs/development', ['SHARED_KEY']],
+      ]);
+      // The probe's own output is the one file meant to hold the values.
+      await rm(outPath);
+      const files = await home.readConfigFiles();
+      for (const [path, contents] of Object.entries(files)) {
+        expect(contents, `canary leaked into ${path}`).not.toContain(shared);
+        expect(contents, `canary leaked into ${path}`).not.toContain(own);
+      }
+    });
+
+    it('reads the shared key in the command environment only, never another one', async () => {
+      const production = newCanary();
+      await addTo('bxlabs', 'production', 'SHARED_KEY', production);
+
+      const probe = await sharedProbe();
+      env['PROBE_OUT'] = join(home.path, 'never-written.txt');
+
+      const result = await runShared('bxlabs/SHARED_KEY', probe);
+
+      // Only bxlabs/production holds it; a development command gets NOT_FOUND,
+      // not the production value.
+      expect(result.code).toBe(5);
+      expect(result.stderr).toContain('bitwarden/bxlabs/development/SHARED_KEY');
+      expect(result.stderr).not.toContain(production);
+    });
+
+    it('asserts policy on the shared project too, before the vault is read', async () => {
+      const shared = newCanary();
+      await addTo('bxlabs', 'development', 'SHARED_KEY', shared);
+
+      const paths = resolvePaths(env as NodeJS.ProcessEnv);
+      await writeFile(
+        paths.policyFile,
+        [
+          'version: 1',
+          'projects:',
+          '  bxlabs:',
+          '    environments:',
+          '      development:',
+          '        allow: [list, describe]',
+          '',
+        ].join('\n'),
+        { mode: 0o600 },
+      );
+
+      const probe = await sharedProbe();
+      const outPath = join(home.path, 'denied-output.txt');
+      env['PROBE_OUT'] = outPath;
+      const callsBefore = (await bws.calls()).length;
+
+      const result = await runShared('bxlabs/SHARED_KEY', probe);
+
+      expect(result.code).toBe(4);
+      expect(result.stderr).toContain('projects.bxlabs.environments.development.allow');
+      expect(result.stderr).not.toContain(shared);
+      // Denied before any vault read, and the child never started.
+      expect((await bws.calls()).length).toBe(callsBefore);
+      await expect(readFile(outPath, 'utf8')).rejects.toThrow();
+    });
+
+    it('refuses two secrets that would be injected under the same name', async () => {
+      await addSecret('SHARED_KEY', newCanary());
+      await addTo('bxlabs', 'development', 'SHARED_KEY', newCanary());
+
+      const result = await runShared('SHARED_KEY,bxlabs/SHARED_KEY', await sharedProbe());
+
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain('SHARED_KEY');
+    });
+
+    it('accepts project/NAME in a manifest and rejects an environment in it', async () => {
+      const shared = newCanary();
+      await addTo('bxlabs', 'development', 'SHARED_KEY', shared);
+
+      const probe = await sharedProbe();
+      const outPath = join(home.path, 'manifest-shared.txt');
+      env['PROBE_OUT'] = outPath;
+
+      const manifest = (secret: string): string =>
+        [
+          'version: 1',
+          'project: ezjob',
+          'commands:',
+          '  probe:',
+          '    environment: development',
+          `    secrets: [${secret}]`,
+          `    command: ["${process.execPath}", "${probe}"]`,
+          '',
+        ].join('\n');
+
+      await writeFile(join(home.path, 'agent-secrets.yaml'), manifest('bxlabs/SHARED_KEY'));
+      const ok = await cli(['run', '--manifest', 'probe', '--cwd', home.path]);
+      expect(ok.code).toBe(0);
+      const seen = JSON.parse(await readFile(outPath, 'utf8')) as Record<string, string | null>;
+      expect(seen['shared']).toBe(shared);
+
+      await writeFile(
+        join(home.path, 'agent-secrets.yaml'),
+        manifest('bxlabs/production/SHARED_KEY'),
+      );
+      const refused = await cli(['run', '--manifest', 'probe', '--cwd', home.path]);
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toContain('manifest');
+    });
+
+    it('shows each reference in a dry run and reads nothing', async () => {
+      await addTo('bxlabs', 'development', 'SHARED_KEY', newCanary());
+      const callsBefore = (await bws.calls()).length;
+
+      const result = await runShared('bxlabs/SHARED_KEY', await sharedProbe(), [
+        '--dry-run',
+        '--json',
+      ]);
+
+      expect(result.code).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.data.references).toEqual(['bitwarden/bxlabs/development/SHARED_KEY']);
+      expect(envelope.data.secretNames).toEqual(['SHARED_KEY']);
+      expect((await bws.calls()).length).toBe(callsBefore);
+    });
   });
 });
 

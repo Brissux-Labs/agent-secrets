@@ -265,6 +265,91 @@ describe('CLI lifecycle', () => {
       expect(state.secrets.some((secret) => secret.key.includes('production'))).toBe(false);
     });
 
+    describe('into a shared project', () => {
+      const copyAcross = async (from: string, to: string, extra: string[] = []) =>
+        await cli([
+          'copy',
+          'OPENAI_API_KEY',
+          '--project',
+          'ezjob',
+          '--from',
+          from,
+          '--to',
+          to,
+          '--to-project',
+          'bxlabs',
+          ...extra,
+        ]);
+
+      it('promotes a key to another project in the same environment, vault to vault', async () => {
+        await enrol();
+        const canary = newCanary();
+        await add('development', canary);
+
+        const result = await copyAcross('development', 'development', ['--json']);
+
+        expect(result.code).toBe(0);
+        const envelope = JSON.parse(result.stdout);
+        expect(envelope.data.from).toBe('bitwarden/ezjob/development/OPENAI_API_KEY');
+        expect(envelope.data.reference).toBe('bitwarden/bxlabs/development/OPENAI_API_KEY');
+        expect(result.stdout).not.toContain(canary);
+        expect(result.stderr).not.toContain(canary);
+
+        const state = await bws.readState();
+        const target = state.secrets.find((secret) => secret.key.startsWith('bxlabs/'));
+        expect(target?.key).toBe('bxlabs/development/OPENAI_API_KEY');
+        expect(target?.value).toBe(canary);
+
+        const files = await home.readConfigFiles();
+        for (const [path, contents] of Object.entries(files)) {
+          expect(contents, `canary leaked into ${path}`).not.toContain(canary);
+        }
+      });
+
+      it('may go up an environment, never down', async () => {
+        await enrol();
+        await add('development', newCanary());
+        await add('production', newCanary());
+
+        expect((await copyAcross('development', 'preview')).code).toBe(0);
+
+        const downward = await copyAcross('production', 'development');
+        expect(downward.code).toBe(2);
+        expect(downward.stderr).toContain('upward');
+      });
+
+      it('needs "copy" on the source project as well as the target', async () => {
+        await enrol();
+        const canary = newCanary();
+        await add('development', canary);
+
+        // ezjob keeps its development keys to itself: taking one out into
+        // another project is a decision the source project makes.
+        const paths = resolvePaths(env as NodeJS.ProcessEnv);
+        await writeFile(
+          paths.policyFile,
+          [
+            'version: 1',
+            'projects:',
+            '  ezjob:',
+            '    environments:',
+            '      development:',
+            '        allow: [list, describe, create, run]',
+            '',
+          ].join('\n'),
+          { mode: 0o600 },
+        );
+
+        const result = await copyAcross('development', 'development');
+
+        expect(result.code).toBe(4);
+        expect(result.stderr).toContain('projects.ezjob.environments.development.allow');
+        expect(result.stderr).not.toContain(canary);
+        const state = await bws.readState();
+        expect(state.secrets.some((secret) => secret.key.startsWith('bxlabs/'))).toBe(false);
+      });
+    });
+
     it('honours a policy file that opens production copy, and audits it without the value', async () => {
       await enrol();
       const canary = newCanary();

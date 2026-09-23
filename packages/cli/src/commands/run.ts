@@ -4,9 +4,11 @@ import {
   formatScope,
   InvalidInputError,
   isProduction,
-  makeRef,
   makeScope,
   PolicyDeniedError,
+  refInScope,
+  resolveSelectors,
+  scopesOf,
 } from '@bx-labs/agent-secrets-core';
 import { confirm } from '@inquirer/prompts';
 import { loadApprovals, recordApproval } from '../approvals.js';
@@ -54,13 +56,16 @@ export async function runRun(
   const scope = makeScope({ project: plan.project, environment: plan.environment });
   const [executable, ...args] = plan.command as [string, ...string[]];
 
-  // Policy first, before the backend is even contacted. A denied run must not
-  // cause a vault read.
-  context.policy.assert({ action: 'run', target: scope, executable });
+  const refs = resolveSelectors(plan.secretNames, scope);
+  const scopes = scopesOf(refs, scope);
 
-  const refs = plan.secretNames.map((name) =>
-    makeRef({ project: plan.project, environment: plan.environment, name }),
-  );
+  // Policy first, before the backend is even contacted. A denied run must not
+  // cause a vault read. Asserted on every scope read: a shared project decides
+  // for itself whether its keys may be injected, whatever the command's own
+  // project allows.
+  for (const target of scopes) {
+    context.policy.assert({ action: 'run', target, executable });
+  }
 
   if (options.dryRun) {
     const description = describeDryRun(refs, executable, args);
@@ -68,7 +73,13 @@ export async function runRun(
       [
         `${fmt.bold('Dry run')} — nothing was executed.`,
         `  command: ${description.command}`,
-        `  would inject: ${description.secretNames.join(', ') || '(none)'}`,
+        `  would inject: ${
+          refs
+            .map((ref) =>
+              ref.project === scope.project ? ref.name : `${ref.name} (from ${ref.project})`,
+            )
+            .join(', ') || '(none)'
+        }`,
       ].join('\n'),
     );
     return 0;
@@ -125,20 +136,26 @@ export async function runRun(
     );
   }
 
-  await context.audit.record(
-    buildAuditEvent({
-      actorType: 'human',
-      actorId: context.config?.deviceId ?? 'unknown',
-      operation: 'run',
-      reference: formatScope(scope),
-      secretNames: [...outcome.injected],
-      // FR-RUN-010: the executable, never the argument vector, which routinely
-      // carries tokens of its own.
-      commandExecutable: executable,
-      outcome: outcome.code === 0 ? 'success' : 'failure',
-      durationMs: outcome.durationMs,
-    }),
-  );
+  // One event per scope read, so a key taken from a shared project is
+  // attributed to that project rather than to the command's.
+  for (const target of scopes) {
+    await context.audit.record(
+      buildAuditEvent({
+        actorType: 'human',
+        actorId: context.config?.deviceId ?? 'unknown',
+        operation: 'run',
+        reference: formatScope(target),
+        secretNames: refs
+          .filter((ref) => refInScope(ref, target) && outcome.injected.includes(ref.name))
+          .map((ref) => ref.name),
+        // FR-RUN-010: the executable, never the argument vector, which routinely
+        // carries tokens of its own.
+        commandExecutable: executable,
+        outcome: outcome.code === 0 ? 'success' : 'failure',
+        durationMs: outcome.durationMs,
+      }),
+    );
+  }
 
   if (context.writer.isJson) {
     context.writer.ok(
@@ -263,8 +280,14 @@ async function planFromManifest(context: Context, options: RunOptions): Promise<
         });
       }
 
+      // Name every shared project read, so the human consents to where the
+      // credentials come from and not only to how many there are.
+      const shared = [
+        ...new Set(entry.secrets.filter((s) => s.includes('/')).map((s) => s.split('/')[0])),
+      ];
+      const from = shared.length === 0 ? '' : ` (including from ${shared.join(', ')})`;
       const confirmed = await confirm({
-        message: `Run "${entry.command.join(' ')}" in ${loaded.manifest.project}/${entry.environment} with ${entry.secrets.length} secret(s)?`,
+        message: `Run "${entry.command.join(' ')}" in ${loaded.manifest.project}/${entry.environment} with ${entry.secrets.length} secret(s)${from}?`,
         default: false,
       });
       if (!confirmed) {

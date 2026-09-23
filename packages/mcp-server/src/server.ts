@@ -12,8 +12,11 @@ import {
   makeScope,
   nullAuditSink,
   type PolicyEngine,
+  refInScope,
+  resolveSelectors,
   type SecretBackend,
   type SecretRef,
+  scopesOf,
   toSafeError,
 } from '@bx-labs/agent-secrets-core';
 import { truncate } from '@bx-labs/agent-secrets-redaction';
@@ -206,7 +209,11 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     { description: TOOL_DESCRIPTIONS.secret_copy, inputSchema: secretCopyArgs.shape },
     guarded(async (args) => {
       const source = makeRef({ project: args.project, environment: args.from, name: args.name });
-      const target = makeRef({ project: args.project, environment: args.to, name: args.name });
+      const target = makeRef({
+        project: args.toProject ?? args.project,
+        environment: args.to,
+        name: args.name,
+      });
 
       if (options.readOnly) {
         return fail('This server runs in read-only mode. Copying is disabled.');
@@ -284,17 +291,21 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         return fail('This server runs in read-only mode. Command execution is disabled.');
       }
 
-      policy.assert({ action: 'run', target: scope, executable });
+      const refs = resolveSelectors(args.secrets, scope);
+      const scopes = scopesOf(refs, scope);
 
-      const refs = args.secrets.map((name) =>
-        makeRef({ project: args.project, environment: args.environment, name }),
-      );
+      // Every scope read, not just the command's: a shared project decides
+      // whether its keys may be injected.
+      for (const target of scopes) {
+        policy.assert({ action: 'run', target, executable });
+      }
 
       if (args.dryRun) {
         return ok({
           dryRun: true,
           command: args.command.join(' '),
           wouldInject: refs.map((ref) => ref.name),
+          references: refs.map(formatRef),
         });
       }
 
@@ -315,15 +326,20 @@ export function createMcpServer(options: McpServerOptions): McpServer {
           : { cwd: args.cwd }),
       });
 
-      await record({
-        actorId: 'mcp',
-        operation: 'run',
-        reference: formatScope(scope),
-        secretNames: [...outcome.injected],
-        commandExecutable: executable,
-        outcome: outcome.code === 0 ? 'success' : 'failure',
-        durationMs: outcome.durationMs,
-      });
+      // One event per scope read, so a shared key is attributed to its project.
+      for (const target of scopes) {
+        await record({
+          actorId: 'mcp',
+          operation: 'run',
+          reference: formatScope(target),
+          secretNames: refs
+            .filter((ref) => refInScope(ref, target) && outcome.injected.includes(ref.name))
+            .map((ref) => ref.name),
+          commandExecutable: executable,
+          outcome: outcome.code === 0 ? 'success' : 'failure',
+          durationMs: outcome.durationMs,
+        });
+      }
 
       return ok({
         command: args.command.join(' '),

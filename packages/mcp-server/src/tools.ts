@@ -1,4 +1,9 @@
-import { ENVIRONMENTS, SECRET_NAME_PATTERN, SLUG_PATTERN } from '@bx-labs/agent-secrets-core';
+import {
+  ENVIRONMENTS,
+  SECRET_NAME_PATTERN,
+  SECRET_SELECTOR_PATTERN,
+  SLUG_PATTERN,
+} from '@bx-labs/agent-secrets-core';
 import { z } from 'zod';
 
 /**
@@ -57,6 +62,7 @@ export const SERVER_INSTRUCTIONS = [
   '  Create one                         -> secret_add_request',
   '  Replace one                        -> secret_rotate_request',
   '  Same value, higher environment     -> secret_copy (vault to vault, never retyped)',
+  '  Same value, shared across projects -> secret_copy with toProject, then project/NAME',
   '  Delete one                         -> secret_delete_request, confirmation from the human',
   '  Backend or server down             -> report the blockage and stop',
   '',
@@ -82,6 +88,9 @@ export const SERVER_INSTRUCTIONS = [
   'An application receives the variable name it expects: OPENAI_API_KEY stays',
   'OPENAI_API_KEY. Scope lives in the reference — project/environment/name — never in',
   'the variable name. run_with_secrets injects each secret under its own name.',
+  'A key kept once for many projects lives in a shared project and is named',
+  'project/NAME (e.g. bxlabs/OPENAI_API_KEY): same environment as the command, still',
+  'injected as OPENAI_API_KEY. It is never looked up there implicitly.',
 ].join('\n');
 
 const projectArg = z
@@ -133,7 +142,14 @@ export const secretCopyArgs = z.object({
   to: z
     .enum(ENVIRONMENTS)
     .describe(
-      'Environment to add it to. Must be above "from": development → preview → production.',
+      'Environment to add it to. Must be above "from": development → preview → production. ' +
+        'With toProject it may also equal "from".',
+    ),
+  toProject: projectArg
+    .optional()
+    .describe(
+      'Copy into this project instead, e.g. a shared project that holds keys every project ' +
+        'reuses. Omit to stay in "project".',
     ),
 });
 
@@ -153,10 +169,20 @@ export const runWithSecretsArgs = z.object({
   project: projectArg,
   environment: environmentArg,
   secrets: z
-    .array(nameArg)
+    .array(
+      z
+        .string()
+        .regex(SECRET_SELECTOR_PATTERN, 'NAME or project/NAME')
+        .describe(
+          'NAME from this project, or project/NAME from a shared project in the same environment.',
+        ),
+    )
     .min(1)
     .max(32)
-    .describe('Exact names to inject. Only these are provided; there is no "all secrets" option.'),
+    .describe(
+      'Exact secrets to inject, each under its own NAME. Only these are provided; there is no ' +
+        '"all secrets" option.',
+    ),
   command: z
     .array(z.string().min(1))
     .min(1)
@@ -202,10 +228,11 @@ export const TOOL_DESCRIPTIONS = {
     'neither reaches you.',
 
   secret_copy:
-    'Promote a secret that already exists in a lower environment to a higher one, vault to ' +
-    'vault. Use it when the same credential serves two environments, instead of asking the ' +
-    'human to supply it again. It never overwrites an existing target, never copies downward, ' +
-    'and never returns the value. Denied in production unless policy permits it.',
+    'Promote a secret that already exists in a lower environment to a higher one, or into a ' +
+    'shared project (toProject), vault to vault. Use it when the same credential serves two ' +
+    'environments or several projects, instead of asking the human to supply it again. It never ' +
+    'overwrites an existing target, never copies downward, and never returns the value. Denied ' +
+    'in production unless policy permits it.',
 
   secret_delete_request:
     'Request deletion of a secret. Requires the exact canonical reference as confirmation, ' +
@@ -213,7 +240,8 @@ export const TOOL_DESCRIPTIONS = {
     'Ask the human to supply the confirmation string.',
 
   run_with_secrets:
-    'Run a command with the named secrets injected into its environment. ' +
+    'Run a command with the named secrets injected into its environment. A key shared across ' +
+    'projects is named project/NAME and read in the same environment. ' +
     'The values go to the child process only; the output returned to you is redacted ' +
     'and size-capped. Use this instead of trying to read a value.',
 
