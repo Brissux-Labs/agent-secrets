@@ -222,8 +222,11 @@ Two behaviours that surprise people, both deliberate:
 - **`--env` is mandatory and never defaults.** An omitted environment is an
   error, because the alternative is eventually writing to production while
   believing you are in development.
-- **Production is denied by default.** Not a warning — a refusal, with exit 4.
-  Enabling it means writing it down in a policy file, which leaves a trace.
+- **Production refuses `rotate` and `delete` by default.** Not a warning — a
+  refusal, with exit 4. Enabling them means writing it down in a policy file, which
+  leaves a trace. Everything that neither replaces nor destroys a live value —
+  `create`, `run`, `copy` and the metadata reads — is open; a production `run` still
+  asks a human at the terminal unless `--yes` is passed.
 
 ---
 

@@ -105,12 +105,13 @@ export interface PolicyDecision {
 /**
  * The default policy when no `agent-secrets.policy.yaml` is present.
  *
- * Deliberately restrictive: development is fully usable, preview is read-only
- * plus execution, and production allows metadata reads plus `create` — the one
- * write that cannot overwrite, disclose or execute anything. Every mutation
- * that touches an existing production credential (`rotate`, `delete`, `run`)
- * stays disabled until a user writes it down explicitly in a policy file, which
- * is exactly the kind of decision that should leave a trace.
+ * Development is fully usable, preview is read-only plus execution, and
+ * production allows every action that never returns a value and never
+ * replaces or destroys one: metadata reads, `create`, `request-create`,
+ * `copy` and `run`. The two mutations that touch a live production credential
+ * (`rotate`, `delete`) and the request that leads to one (`request-rotate`)
+ * stay disabled until a user writes them down in a policy file, which is
+ * exactly the kind of decision that should leave a trace.
  */
 export function defaultPolicy(): PolicyDocument {
   return policyDocumentSchema.parse({
@@ -144,8 +145,9 @@ const DEFAULT_ENVIRONMENT_RULES: Record<string, { allow: Action[]; humanApproval
   },
   production: {
     /**
-     * `create` is here and `rotate`, `delete` and `run` are not, and the line
-     * between them is what the action can reach:
+     * `create`, `run` and `copy` are here and `rotate` and `delete` are not,
+     * and the line between them is whether the action can replace or destroy
+     * a value something in production is already using:
      *
      *  * `create` can only add a name that does not exist yet — `runAdd`
      *    refuses an existing one with `ConflictError` (FR-ADD-005), so it can
@@ -157,22 +159,31 @@ const DEFAULT_ENVIRONMENT_RULES: Record<string, { allow: Action[]; humanApproval
      *    most ordinary act, which is how people end up keeping credentials
      *    somewhere else instead.
      *  * `rotate` replaces a value that something in production is currently
-     *    using, `delete` destroys one, and `run` injects them into a child
-     *    process. Each touches what already exists, so each stays closed until
-     *    a policy file says otherwise — a decision that then leaves a trace in
-     *    a reviewed commit.
+     *    using and `delete` destroys one. Each touches what already exists,
+     *    so each stays closed until a policy file says otherwise — a decision
+     *    that then leaves a trace in a reviewed commit.
+     *  * `run` injects values into a child process and returns only redacted
+     *    output. Closed by default, it sent every production deploy step —
+     *    setting a hosting variable, wiring a webhook — through a clipboard or
+     *    a conversation instead, and every project had to reopen it by hand
+     *    (2026-09-28). The executable deny list still applies, and the CLI
+     *    still asks a human before a production run unless `--yes` is passed.
+     *    Residual risk, stated plainly: redaction is exact-match, so a child
+     *    that deliberately re-encodes a value can still print it. That is the
+     *    threat model's "porous denylist" limit, not a new one.
      *  * `request-create` is `create` one step earlier: it produces a link, or
      *    a hand-over command, that a human fills in out of band. It adds a
      *    name that does not exist, discloses nothing, and the human reads the
      *    name before typing. Denying it while allowing `create` meant an agent
      *    could not even *ask* for a production secret — so the value went
      *    through a clipboard instead (2026-09-17).
-     *  * `copy` cannot overwrite either, but unlike `create` it is reachable
-     *    from the MCP toolset and needs no human at all, so an injected agent
-     *    could seed production with a name nobody asked for. It stays closed
-     *    here and is opened per project in a policy file.
+     *  * `copy` cannot overwrite either and never returns the value. Unlike
+     *    `create` it needs no human, so an injected agent could seed
+     *    production with a name nobody asked for; that name is new, nothing
+     *    is replaced, and the audit records it (`operation: copy`). Every
+     *    project on the reference machine had opened it by hand (2026-09-28).
      */
-    allow: ['list', 'describe', 'create', 'request-create'],
+    allow: ['list', 'describe', 'create', 'request-create', 'run', 'copy'],
     humanApproval: [],
   },
 };

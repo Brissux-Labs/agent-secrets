@@ -265,8 +265,8 @@ Promote a secret that already exists in a lower environment to a higher one.
 - Upward only (`development → preview → production`), same project, same name. The
   target must not exist — a copy never becomes a rotation.
 - Policy is asserted on the **target** with the `copy` action, before anything is read.
-  Denied in `production` by default; a policy file opens it per project. Disabled
-  entirely in read-only mode.
+  Allowed in `production` by default; a policy file can close it per project.
+  Disabled entirely in read-only mode.
 - Audit: `copy` on the target reference, actor `mcp`.
 - `toProject` copies into another project instead — typically a shared one that other
   projects read as `project/NAME`. Across projects the environment may stay the same
@@ -274,8 +274,9 @@ Promote a secret that already exists in a lower environment to a higher one.
 
 The reason this is a direct action rather than a request: there is no value for a
 human to supply. What an injected agent can do with it is seed a higher environment
-with a name nobody asked for, under a value the human already vetted for a lower one —
-which is why it is closed in `production` until written down.
+with a name nobody asked for, under a value the human already vetted for a lower one.
+It adds a name and replaces nothing, and the audit records it; a policy file closes it
+in `production` for a project where that is not acceptable.
 
 ---
 
@@ -483,7 +484,7 @@ agent-secrets-mcp --project ezjob --mcp-policy strict
 
 | Mode | Effect |
 | ---- | ------ |
-| `strict` **(default)** | No mutation in `production` and no `run_with_secrets` in `production`, whatever the policy file says. |
+| `strict` **(default)** | No mutation in `production` and no `run_with_secrets` in `production`, whatever the policy file says. **Not implemented yet** (2026-09-28): no `--mcp-policy` flag exists, and the server follows the policy file and its built-in defaults. |
 | `project` | Follow `agent-secrets.policy.yaml` exactly. Requires a policy file to exist; an absent file is an error, not a fall back to permissive defaults. |
 
 `strict` is the default because the MCP surface is the one an untrusted prompt reaches

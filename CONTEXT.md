@@ -45,11 +45,11 @@ interface and do not widen it casually.
 These are decisions, not oversights. Do not "fix" them without a human saying so.
 
 - **Destructive production mutation is off.** `defaultPolicy()` gives `production`
-  `list`, `describe`, `create` and `request-create`. Enabling `rotate`, `delete`,
-  `run` or `copy` there requires an explicit policy file. This stays off through V1. `create` was in that list until
-  2026-08-19 and is not any more — see the timeline entry for the reasoning, which
-  turns on `add` refusing to overwrite and on the MCP toolset having no path to the
-  action at all.
+  `list`, `describe`, `create`, `request-create`, `run` and `copy`. Enabling `rotate`,
+  `delete` or `request-rotate` there requires an explicit policy file. This stays off
+  through V1. `create` left the closed list on 2026-08-19, `run` and `copy` on
+  2026-09-28 — see those timeline entries. The line is now: nothing that replaces or
+  destroys a live value, nothing that returns one.
 - **There is no `resolveOne` on `SecretBackend`.** The batch-only shape is
   intentional: it makes "resolve one secret and print it" awkward to write, which is
   the point.
@@ -102,6 +102,8 @@ because it is the first thing the next reader trusts.
    `run_with_secrets` with `command` + `args`; the tool takes one `command` array.
    `DOC.md` and `agent-secrets.example.yaml` match the code. Found 2026-09-23, not
    yet rewritten — the 2026-09-23 entry only added the shared-project sections.
+   `docs/mcp.md` also documents a `--mcp-policy strict` default that was never
+   implemented; it is marked as such since 2026-09-28.
 
 ## Conventions worth knowing before you touch anything
 
@@ -132,6 +134,39 @@ down here or in `DOC.md` before you finish.
 ---
 
 ## Intervention timeline
+
+### 2026-09-28 — `run` and `copy` open in production by default
+
+**What happened.** The operator hit a `POLICY_DENIED` on `run` in
+`tessan-crm/production` — the fifth project to need it opened by hand, after `ezjob`,
+`bxlabs`, `olvia` and `4bl1ty`, each with its own dated paragraph in the machine's
+`policy.yaml`. They asked for the product default to change for every user ("the
+product for all", chosen over a machine-local `defaults:` block), on the rule "as long
+as the AI does not see the value, it may use variables and store them itself".
+
+**Changed.** `DEFAULT_ENVIRONMENT_RULES.production.allow` gains `run` and `copy`.
+`rotate`, `delete` and `request-rotate` stay closed: they replace or destroy a value in
+service. The executable deny list and the CLI's production confirmation (waivable
+with `--yes`) are untouched. Manifest production commands still need a human approval
+at a terminal.
+
+**Storing a random value needs no new code.** `openssl rand -base64 32 | agent-secrets
+add NAME --project P --env production --stdin` already worked: `create` was open, and
+`--stdin` needs no TTY. The MCP instructions now say so, so an agent stops handing that
+command to a human.
+
+**Residual risk, written into `docs/threat-model.md`.** Redaction of `run` output is
+exact-match. An agent that *wants* a production value can have a child re-encode it
+and print it. Closing `run` per project in a policy file restores the boundary.
+
+**Found on the way.** `docs/mcp.md` documents `--mcp-policy strict` as the default,
+blocking `run_with_secrets` in production "whatever the policy file says". No such
+flag exists in the code. Marked "not implemented" there, not built.
+
+**Tests.** Core policy defaults rewritten (run/copy allowed, deny list still applied in
+production, rotate/delete/request-rotate denied for any project name); MCP: production
+copy then run with a canary, output redacted; a policy file that closes production
+copy still denies it (MCP and CLI); instructions carry the `--stdin` pipe.
 
 ### 2026-09-23 — Keys shared across projects (`project/NAME`), and copying into one
 

@@ -53,7 +53,8 @@ deny-by-default: an action absent from a project's allow list is denied, an
 unknown project is denied, and a policy file that fails to parse is a hard
 failure rather than a fallback to permissive defaults. The built-in rules give
 `development` the full lifecycle, `preview` read plus `run`, and `production`
-`list` and `describe` only.
+everything except `rotate`, `delete` and `request-rotate` — the actions that
+replace or destroy a value already in service.
 
 ```ts
 import { PolicyEngine } from '@bx-labs/agent-secrets-core';

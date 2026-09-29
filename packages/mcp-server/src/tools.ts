@@ -69,6 +69,8 @@ export const SERVER_INSTRUCTIONS = [
   'When secure links are not configured, the request tools hand you the exact',
   '`agent-secrets add` or `agent-secrets rotate` command instead. Give it to the human',
   'verbatim; they type the value at a hidden prompt. You never see it, and never need to.',
+  'A value that only has to be random (auth or signing secret) needs no human: pipe it',
+  'straight in, `openssl rand -base64 32 | agent-secrets add NAME --project P --env E --stdin`.',
   '',
   'NEVER',
   '- Ask a human to paste a value into this conversation, a chat, an issue or a ticket.',
@@ -231,8 +233,7 @@ export const TOOL_DESCRIPTIONS = {
     'Promote a secret that already exists in a lower environment to a higher one, or into a ' +
     'shared project (toProject), vault to vault. Use it when the same credential serves two ' +
     'environments or several projects, instead of asking the human to supply it again. It never ' +
-    'overwrites an existing target, never copies downward, and never returns the value. Denied ' +
-    'in production unless policy permits it.',
+    'overwrites an existing target, never copies downward, and never returns the value.',
 
   secret_delete_request:
     'Request deletion of a secret. Requires the exact canonical reference as confirmation, ' +

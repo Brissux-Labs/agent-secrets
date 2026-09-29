@@ -34,7 +34,7 @@ function ref(project: string, environment: string, name = 'OPENAI_API_KEY'): Sec
  * deliberately absent: it can only add a name that does not exist yet, so it is
  * the one write that cannot destroy a live credential.
  */
-const DESTRUCTIVE_MUTATIONS: Action[] = ['rotate', 'delete', 'run', 'request-rotate'];
+const DESTRUCTIVE_MUTATIONS: Action[] = ['rotate', 'delete', 'request-rotate'];
 
 describe('defaultPolicy', () => {
   it('parses into a complete document', () => {
@@ -91,17 +91,24 @@ describe('defaultPolicy', () => {
     expect(decision.reason).toMatch(/deny list/i);
   });
 
-  it('allows list, describe, create and request-create in production, and nothing else', () => {
+  it('allows every production action that neither overwrites nor destroys, and nothing else', () => {
     const engine = new PolicyEngine();
     for (const action of ACTIONS) {
       const expected =
         action === 'list' ||
         action === 'describe' ||
         action === 'create' ||
-        action === 'request-create';
-      expect(engine.evaluate({ action, target: ref('ezjob', 'production') }).allowed, action).toBe(
-        expected,
-      );
+        action === 'request-create' ||
+        action === 'run' ||
+        action === 'copy';
+      expect(
+        engine.evaluate({
+          action,
+          target: ref('ezjob', 'production'),
+          ...(action === 'run' ? { executable: 'node' } : {}),
+        }).allowed,
+        action,
+      ).toBe(expected);
     }
   });
 
@@ -133,12 +140,33 @@ describe('defaultPolicy', () => {
     expect(decision.requiresHumanApproval).toBe(false);
   });
 
-  for (const action of ['delete', 'rotate', 'run', 'request-rotate', 'copy'] as const) {
+  it('allows run in production without a policy file, and still applies the deny list', () => {
+    // `run` hands the values to a child process and returns nothing to the
+    // caller. Closing it by default sent generated or pasted values through a
+    // clipboard or a conversation instead (2026-09-28). The executable deny
+    // list is evaluated after the allow list, so it still holds here.
+    const engine = new PolicyEngine();
+    const allowed = engine.evaluate({
+      action: 'run',
+      target: ref('never-declared-anywhere', 'production'),
+      executable: 'vercel',
+    });
+    expect(allowed.allowed).toBe(true);
+    expect(allowed.requiresHumanApproval).toBe(false);
+    const denied = engine.evaluate({
+      action: 'run',
+      target: ref('never-declared-anywhere', 'production'),
+      executable: 'printenv',
+    });
+    expect(denied.allowed).toBe(false);
+    expect(denied.reason).toMatch(/deny list/i);
+  });
+
+  for (const action of ['delete', 'rotate', 'request-rotate'] as const) {
     it(`denies "${action}" in production`, () => {
       const decision = new PolicyEngine().evaluate({
         action,
         target: ref('ezjob', 'production'),
-        ...(action === 'run' ? { executable: 'node' } : {}),
       });
       expect(decision.allowed).toBe(false);
       expect(decision.requiresHumanApproval).toBe(false);
@@ -169,16 +197,14 @@ describe('defaultPolicy', () => {
     expect(engine.evaluate({ action: 'rotate', target }).allowed).toBe(false);
   });
 
-  it('allows copy into preview by default, and never into production', () => {
+  it('allows copy into preview and production by default', () => {
     // `copy` writes a value the human already vetted for a lower environment
     // into a higher one, vault to vault. It can only add a name that does not
-    // exist yet, so it belongs with `create` in preview — but it is reachable
-    // from the MCP toolset, so production keeps it closed until a policy file
-    // says otherwise.
+    // exist yet and never returns the value, so it belongs with `create`.
     const engine = new PolicyEngine();
     expect(engine.evaluate({ action: 'copy', target: ref('ezjob', 'preview') }).allowed).toBe(true);
     expect(engine.evaluate({ action: 'copy', target: ref('ezjob', 'production') }).allowed).toBe(
-      false,
+      true,
     );
   });
 });

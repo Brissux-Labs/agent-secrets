@@ -288,7 +288,7 @@ describe('MCP server', () => {
     expect(textOf(result)).toContain('out of band');
   });
 
-  it('denies every production mutation under the default policy', async () => {
+  it('denies every production overwrite and deletion under the default policy', async () => {
     await connect({ issuer: stubIssuer });
     const production = { project: 'ezjob', environment: 'production' as const };
 
@@ -312,29 +312,41 @@ describe('MCP server', () => {
       /not allowed/i,
     );
 
-    expectRefusal(
-      await client.callTool({
-        name: 'run_with_secrets',
-        arguments: { ...production, secrets: ['PROD_KEY'], command: ['echo', 'hi'] },
-      }),
-      /not allowed/i,
-    );
-
-    expectRefusal(
-      await client.callTool({
-        name: 'secret_copy',
-        arguments: {
-          project: 'ezjob',
-          name: 'OPENAI_API_KEY',
-          from: 'development',
-          to: 'production',
-        },
-      }),
-      /not allowed/i,
-    );
     // Denied before the vault was touched: nothing landed in production.
     const state = await bws.readState();
     expect(state.secrets.some((secret) => secret.key.includes('production'))).toBe(false);
+  });
+
+  it('copies into and runs against production under the default policy, never returning the value', async () => {
+    // Neither action can overwrite or destroy a live value, and neither returns
+    // one: copy moves it vault to vault, run hands it to a child process whose
+    // output is redacted before it reaches the model (2026-09-28).
+    await connect();
+    const copied = await client.callTool({
+      name: 'secret_copy',
+      arguments: {
+        project: 'ezjob',
+        name: 'OPENAI_API_KEY',
+        from: 'development',
+        to: 'production',
+      },
+    });
+    expect((copied as { isError?: boolean }).isError).toBeFalsy();
+    expect(textOf(copied)).not.toContain(canary);
+
+    const result = await client.callTool({
+      name: 'run_with_secrets',
+      arguments: {
+        project: 'ezjob',
+        environment: 'production',
+        secrets: ['OPENAI_API_KEY'],
+        command: [process.execPath, '-e', 'console.log(process.env.OPENAI_API_KEY)'],
+      },
+    });
+    const text = textOf(result);
+    expect(text).toContain('"exitCode": 0');
+    expect(text).not.toContain(canary);
+    expect(text).toContain('[REDACTED]');
   });
 
   describe('secret_copy', () => {
@@ -409,14 +421,14 @@ describe('MCP server', () => {
       expect(target?.value).toBe(canary);
     });
 
-    it('honours a policy document that opens production copy', async () => {
+    it('honours a policy document that closes production copy', async () => {
       const policy = new PolicyEngine(
         parsePolicy({
           version: 1,
           projects: {
             ezjob: {
               environments: {
-                production: { allow: ['list', 'describe', 'create', 'copy'], humanApproval: [] },
+                production: { allow: ['list', 'describe', 'create'], humanApproval: [] },
               },
             },
           },
@@ -425,13 +437,15 @@ describe('MCP server', () => {
       );
       await connect({ policy });
 
-      const result = await client.callTool({
-        name: 'secret_copy',
-        arguments: { ...copyArgs, to: 'production' },
-      });
-      expect((result as { isError?: boolean }).isError).toBeFalsy();
-      expect(textOf(result)).toContain('bitwarden/ezjob/production/OPENAI_API_KEY');
-      expect(textOf(result)).not.toContain(canary);
+      expectRefusal(
+        await client.callTool({
+          name: 'secret_copy',
+          arguments: { ...copyArgs, to: 'production' },
+        }),
+        /not allowed/i,
+      );
+      const state = await bws.readState();
+      expect(state.secrets.some((secret) => secret.key.includes('production'))).toBe(false);
     });
   });
 

@@ -249,10 +249,27 @@ describe('CLI lifecycle', () => {
       expect(result.code).toBe(5);
     });
 
-    it('denies a production copy under the default policy, naming the key to add', async () => {
+    it('denies a production copy when a policy file closes it, naming the key to add', async () => {
       await enrol();
       const canary = newCanary();
       await add('development', canary);
+
+      // The default policy opens production copy (2026-09-28); a policy file
+      // that leaves it out of the allow list must still close it.
+      const paths = resolvePaths(env as NodeJS.ProcessEnv);
+      await writeFile(
+        paths.policyFile,
+        [
+          'version: 1',
+          'projects:',
+          '  ezjob:',
+          '    environments:',
+          '      production:',
+          '        allow: [list, describe, create]',
+          '',
+        ].join('\n'),
+        { mode: 0o600 },
+      );
 
       const result = await copy('development', 'production');
 

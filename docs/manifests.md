@@ -226,7 +226,7 @@ Two files, two questions:
 | `agent-secrets.policy.yaml` | *Which actions are permitted, where?* | yes |
 
 The manifest is a **request**. The policy is the **answer**. A manifest listing
-production secrets and a `deploy` command grants nothing on its own: if the policy
+production secrets and a `deploy` command grants nothing on its own: if a policy file
 denies `run` in `production`, the command is denied — and if the manifest came from a
 repository you did not write, it is denied before that, at the approval gate.
 

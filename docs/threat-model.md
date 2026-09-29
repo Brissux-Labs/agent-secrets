@@ -135,7 +135,7 @@ terminal transcript, or an agent conversation log.
 
 **Residual risk:** we authenticate a Telegram *account*. Someone who has taken over an
 allowlisted account is, to us, that user. This is why the one-time link is short-lived
-and single-use, and why production `rotate`, `delete` and `run` are off by default.
+and single-use, and why production `rotate` and `delete` are off by default.
 
 ### 4.4 A replay attacker
 
@@ -408,7 +408,15 @@ Read this section twice. It is the most useful part of the document.
     where policy permits `copy` an injected agent can seed a higher environment with
     a name nobody asked for, under a value the human vetted for a lower one. It cannot
     overwrite, cannot copy downward, and the value never leaves the adapter. It is
-    denied in `production` by default and per project when opened.
+    allowed in `production` by default since 2026-09-28; a policy file closes it.
+
+    `run_with_secrets` and `agent-secrets run` are allowed in `production` by default
+    since 2026-09-28. The value goes to the child process, and the output returned to
+    the agent is redacted — but redaction is exact-match, so a child that deliberately
+    re-encodes a value (base64, reversed, split) prints it past the filter. The deny
+    list is porous in the same way. Against an agent that *wants* the value, `run` is
+    not a boundary; against an agent that merely uses it, it is. A policy file that
+    removes `run` from a project's `production` restores the boundary there.
 17. **Pre-release software, no external review.** The core is covered by tests and the
     quality gates are green, but no third party has reviewed this. Do not put a
     production credential behind it yet.

@@ -381,8 +381,8 @@ agent-secrets copy <NAME> --project <slug> --from <environment> --to <environmen
   and name never change.
 - **Never overwrites.** An existing target is `CONFLICT`; use `rotate` to replace it.
 - Policy is asserted on the **target** with the `copy` action, before the backend is
-  read. Under the default policy `copy` is allowed into `preview` and denied into
-  `production`, like `run`: unlike `create`, it is reachable from the MCP toolset.
+  read. Under the default policy `copy` is allowed into `preview` and into
+  `production`: it cannot overwrite and never returns the value.
 - Audit: `copy`, on the target reference.
 
 **Into a shared project.** `--to-project bxlabs` writes the target in that project
@@ -392,8 +392,8 @@ one every project reads as `bxlabs/NAME` (§1.4). Across projects:
 - the name still never changes, and the environment may stay the same or go **up**,
   never down;
 - policy for `copy` is asserted on the target **and on the source**: a value leaving
-  its project is that project's decision too. Under the default policy that means a
-  production key is shared only once both projects' policy files open `copy` there.
+  its project is that project's decision too. A policy file that closes `copy` in a
+  project's `production` therefore also stops its production keys being shared.
 
 **Exit:** 0; 2 if the direction is not upward; 4 if policy forbids `copy` in the target
 environment, or in the source environment of a cross-project copy; 5 if the source
@@ -519,16 +519,20 @@ With no policy file present:
 | ------------- | ------------------------------------------------------------------------- | ---------------------------------- |
 | `development` | `list`, `describe`, `request-create`, `request-rotate`, `create`, `rotate`, `delete`, `run`, `copy` | —         |
 | `preview`     | `list`, `describe`, `request-create`, `request-rotate`, `run`, `copy`     | `request-create`, `request-rotate` |
-| `production`  | `list`, `describe`, `create`, `request-create`                            | —                                  |
+| `production`  | `list`, `describe`, `create`, `request-create`, `run`, `copy`             | —                                  |
 
 `request-create` is `create` one step earlier — a link or a hand-over command that a
 human fills in out of band — and is open in `production` for the same reason. An agent
 that cannot even ask for a production secret sends the value through a clipboard.
 
 `copy` is evaluated on the environment being written to — and, for a copy into another
-project, on the source as well. It is closed in `production`
-by default for the same reason `run` is: an agent can reach it through the MCP server,
-so opening it is a per-project decision written down in a policy file.
+project, on the source as well.
+
+`run` and `copy` are open in `production` since 2026-09-28. Neither returns a value and
+neither replaces or destroys one; closed by default, they sent every production deploy
+step through a clipboard or a conversation, and every project reopened them by hand.
+The executable deny list still applies to `run`, and the CLI still asks a human before
+a production run unless `--yes` is passed. `rotate` and `delete` stay closed.
 
 Default command lists: `denyExecutables` is `env`, `printenv`, `sh`, `bash`, `zsh`,
 `dash`, `fish`, `ksh`; `allowExecutables` is empty (meaning "no allow-list

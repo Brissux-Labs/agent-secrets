@@ -184,8 +184,9 @@ it as a patch.
 6. **Do not make production actions implicit.** No inferred environment, no
    production default, no `--force` that skips a production gate, no environment
    variable that quietly targets `production`, no policy fallback that becomes
-   permissive when a file is missing or malformed. Turning on production mutation must
-   remain something a human writes down in a policy file and commits.
+   permissive when a file is missing or malformed. Turning on a production mutation
+   that replaces or destroys a live value (`rotate`, `delete`) must remain something a
+   human writes down in a policy file and commits.
 
 7. **Do not log a value or anything derived from it** — length, size, hash, digest,
    prefix, suffix, entropy estimate, character-class summary. See
